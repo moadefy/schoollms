@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+message CanvasElement {
+  oneof element {
+    Stroke stroke = 1;
+    ImageElement image = 2;
+    AnnotationElement annotation = 3;
+  }
+}
+
+message Stroke {
+  repeated Point points = 1;
+  uint32 color = 2;
+  float width = 3;
+}
+
+message Point {
+  double x = 1;
+  double y = 2;
+}
+
+message ImageElement {
+  bytes data = 1;
+  Point position = 2;
+  Size size = 3;
+}
+
+message AnnotationElement {
+  int32 pdfPage = 1;
+  repeated Stroke strokes = 2;
+}
+
+message Size {
+  double width = 1;
+  double height = 2;
+}

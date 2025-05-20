@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launch theme for the splash screen -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">#1E3A8A</item>
+        <!-- Replace with primary color from schoollms.png -->
+        <item name="android:navigationBarColor">#1E3A8A</item>
+        <!-- Replace with primary color -->
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+    <!-- Normal theme for the app after splash -->
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">#F1F5F9</item>
+        <!-- Replace with background color -->
+        <item name="android:statusBarColor">#1E3A8A</item>
+        <!-- Replace with primary color -->
+        <item name="android:navigationBarColor">#1E3A8A</item>
+        <!-- Replace with primary color -->
+        <item name="android:textColorPrimary">#1F2937</item>
+        <!-- Replace with text color -->
+        <item name="android:colorPrimary">#1E3A8A</item>
+        <!-- Replace with primary color -->
+        <item name="android:colorAccent">#FBBF24</item>
+        <!-- Replace with accent color -->
+    </style>
+</resources>

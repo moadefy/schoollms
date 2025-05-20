@@ -1,0 +1,51 @@
+name: schoollms
+description: School learner and learning management system that integrates all learning through an interactive and intelligent timetable with peer-to-peer offline synchronisation
+version: 1.0.0
+environment:
+  sdk: ">=2.12.0 <3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.3+1 # Null-safe, latest
+  table_calendar: ^3.0.9 # Null-safe, latest
+  provider: ^6.1.2 # Null-safe, latest
+  uuid: ^4.5.0 # Null-safe, latest
+  wifi_iot: ^0.3.18 # Null-safe, latest
+  flutter_draggable_gridview: ^0.0.13 # Downgraded to existing version
+  encrypt: ^5.0.3 # Null-safe, latest
+  crypto: ^3.0.5 # Null-safe, latest
+  archive: ^3.6.1 # Null-safe, latest
+  async: ^2.11.0 # Null-safe, latest
+  multicast_dns: ^0.3.2+7 # Null-safe, latest
+  pdf_render: ^1.4.6 # Null-safe, latest
+  protobuf: ^3.1.0 # Null-safe, latest
+  image_picker: ^1.1.2 # Null-safe, latest
+  cupertino_icons: ^1.0.8 # Null-safe, latest
+  permission_handler: ^11.3.1 # For runtime permissions
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0 # Null-safe, latest
+  sqflite_common_ffi: ^2.3.3 # Null-safe, latest
+  mockito: ^5.4.4 # Null-safe, latest
+  test: ^1.25.7 # Null-safe, latest
+  flutter_launcher_icons: ^0.13.1 # For generating app icons
+  flutter_native_splash: ^2.4.1 # For generating splash screen
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/schoollms.png
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/schoollms.png"
+
+flutter_native_splash:
+  color: "#000000" # Black background as requested
+  image: "assets/schoollms.png"
+  android: true
+  ios: true
