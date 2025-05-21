@@ -1,383 +1,178 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_draggable_gridview/flutter_draggable_gridview.dart';
-import 'package:uuid/uuid.dart';
-import 'database_service.dart';
-import 'models.dart';
+import '../../services/database_service.dart';
+import '../../models/timetable.dart';
+import '../../models/class.dart';
+import '../../models/learner.dart';
 
 class TeacherTimetableScreen extends StatefulWidget {
   final String teacherId;
 
-  TeacherTimetableScreen({this.teacherId});
+  const TeacherTimetableScreen({Key? key, required this.teacherId})
+      : super(key: key);
 
   @override
-  _TeacherTimetableScreenState createState() => _TeacherTimetableScreenState();
+  TeacherTimetableScreenState createState() => TeacherTimetableScreenState();
 }
 
-class _TeacherTimetableScreenState extends State<TeacherTimetableScreen> {
+class TeacherTimetableScreenState extends State<TeacherTimetableScreen> {
   List<Class> _classes = [];
+  List<Timetable> _timetables = [];
   List<Learner> _learners = [];
-  List<DraggableGridItem> _gridItems = [];
-  final _timeSlots = [
-    '09:00-10:00',
-    '10:00-11:00',
-    '11:00-12:00',
-    '12:00-13:00',
-    '13:00-14:00',
-  ];
-  DateTime _selectedDay = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _loadClasses();
-    _loadGridItems();
+    _loadData();
   }
 
-  Future<void> _loadClasses() async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    try {
-      final classes = await db._db.query('classes',
-          where: 'teacherId = ?', whereArgs: [widget.teacherId]);
-      setState(() {
-        _classes = classes
-            .map((map) => Class(
-                  id: map['id'],
-                  teacherId: map['teacherId'],
-                  subject: map['subject'],
-                  grade: map['grade'],
-                ))
-            .toList();
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading classes: $e')),
-      );
+  Future<void> _loadData() async {
+    if (!mounted) return;
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final classes = await dbService.getClasses(widget.teacherId);
+    final timetables = await dbService.getTimetables(widget.teacherId);
+    final learnerIds =
+        classes.map((c) => c.learnerIds).expand((i) => i).toSet();
+    final learners = <Learner>[];
+    for (final id in learnerIds) {
+      final learnerList = await dbService.getLearners(id);
+      learners.addAll(learnerList);
     }
-  }
-
-  Future<void> _loadGridItems() async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    try {
-      final timetables =
-          await db.getTimetables(_classes.isNotEmpty ? _classes[0].id : '');
+    if (mounted) {
       setState(() {
-        _gridItems = List.generate(
-            _timeSlots.length,
-            (index) => DraggableGridItem(
-                  child: AnimatedContainer(
-                    duration: Duration(milliseconds: 300),
-                    color: Colors.green[100],
-                    child: Center(
-                        child: Text(_timeSlots[index],
-                            style: TextStyle(color: Colors.grey))),
-                  ),
-                  isDraggable: false,
-                ));
-        for (var timetable in timetables) {
-          final slotIndex =
-              _timeSlots.indexOf(timetable.timeSlot.split(' ')[1]);
-          if (slotIndex != -1) {
-            _gridItems[slotIndex] = DraggableGridItem(
-              child: TimetableCard(timetable: timetable),
-              isDraggable: true,
-            );
-          }
-        }
+        _classes = classes;
+        _timetables = timetables;
+        _learners = learners;
       });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading timetables: $e')),
-      );
-    }
-  }
-
-  Future<void> _showAddTimetableDialog(
-      BuildContext context, int slotIndex) async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    Class selectedClass;
-    List<String> selectedLearnerIds = [];
-
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text('Add Timetable Slot'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButton<Class>(
-                hint: Text('Select Class'),
-                value: selectedClass,
-                items: _classes
-                    .map((cls) => DropdownMenuItem(
-                          value: cls,
-                          child: Text('${cls.subject} (Grade ${cls.grade})'),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedClass = value;
-                    _loadLearners(value.grade).then((learners) {
-                      setState(() {
-                        _learners = learners;
-                      });
-                    });
-                  });
-                },
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  final result = await showDialog<List<String>>(
-                    context: context,
-                    builder: (context) =>
-                        LearnerSelectionDialog(learners: _learners),
-                  );
-                  if (result != null) {
-                    setState(() {
-                      selectedLearnerIds = result;
-                    });
-                  }
-                },
-                child: Text('Select Learners (${selectedLearnerIds.length})'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                if (selectedClass != null) {
-                  final timeSlot =
-                      '${_selectedDay.toIso8601String().split('T')[0]} ${_timeSlots[slotIndex]}';
-                  final timetable = Timetable(
-                    id: Uuid().v4(),
-                    classId: selectedClass.id,
-                    timeSlot: timeSlot,
-                    learnerIds: selectedLearnerIds,
-                  );
-                  try {
-                    await db.insertTimetable(timetable);
-                    setState(() {
-                      _gridItems[slotIndex] = DraggableGridItem(
-                        child: TimetableCard(timetable: timetable),
-                        isDraggable: true,
-                      );
-                    });
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Timetable added successfully')),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error: $e')),
-                    );
-                  }
-                }
-              },
-              child: Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<List<Learner>> _loadLearners(String grade) async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    try {
-      return await db.getLearnersByGrade(grade);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading learners: $e')),
-      );
-      return [];
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Teacher Timetable'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.calendar_today),
-            onPressed: () async {
-              final selected = await showDatePicker(
-                context: context,
-                initialDate: _selectedDay,
-                firstDate: DateTime(2023),
-                lastDate: DateTime(2030),
-              );
-              if (selected != null) {
-                setState(() {
-                  _selectedDay = selected;
-                  _loadGridItems();
-                });
-              }
-            },
+      appBar: AppBar(title: const Text('Teacher Timetable')),
+      body: Column(
+        children: [
+          // Classes Section
+          const Padding(
+            padding: EdgeInsets.all(8.0),
+            child:
+                Text('Classes', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          Expanded(
+            flex: 1,
+            child: _classes.isEmpty
+                ? const Center(child: Text('No classes available'))
+                : ListView.builder(
+                    itemCount: _classes.length,
+                    itemBuilder: (context, index) {
+                      final classObj = _classes[index];
+                      return ListTile(
+                        title: Text(
+                            '${classObj.subject} - Grade ${classObj.grade}'),
+                        onTap: () => _showLearnersDialog(context, classObj),
+                      );
+                    },
+                  ),
+          ),
+          // Timetables Section
+          const Padding(
+            padding: EdgeInsets.all(8.0),
+            child: Text('Timetable',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          Expanded(
+            flex: 2,
+            child: _timetables.isEmpty
+                ? const Center(child: Text('No timetable available'))
+                : ListView.builder(
+                    itemCount: _timetables.length,
+                    itemBuilder: (context, index) {
+                      final timetable = _timetables[index];
+                      return ListTile(
+                        title: Text(timetable.subject),
+                        subtitle: Text(
+                            '${timetable.day} ${timetable.startTime}-${timetable.endTime}'),
+                        onTap: () => _editTimetable(context, timetable),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
-      body: DraggableGridViewBuilder(
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 1,
-          childAspectRatio: 4,
-        ),
-        children: _gridItems,
-        isOnlyLongPress: false,
-        dragCompletion:
-            (List<DraggableGridItem> items, int from, int to) async {
-          final db = Provider.of<DatabaseService>(context, listen: false);
-          setState(() {
-            final dragged = _gridItems[from];
-            _gridItems[from] = DraggableGridItem(
-              child: AnimatedContainer(
-                duration: Duration(milliseconds: 300),
-                color: Colors.green[100],
-                child: Center(
-                    child: Text(_timeSlots[from],
-                        style: TextStyle(color: Colors.grey))),
-              ),
-              isDraggable: false,
-            );
-            _gridItems[to] = dragged;
-            if (dragged.child is TimetableCard) {
-              final timetable = (dragged.child as TimetableCard).timetable;
-              final newTimeSlot =
-                  '${_selectedDay.toIso8601String().split('T')[0]} ${_timeSlots[to]}';
-              final updatedTimetable = Timetable(
-                id: timetable.id,
-                classId: timetable.classId,
-                timeSlot: newTimeSlot,
-                learnerIds: timetable.learnerIds,
-              );
-              try {
-                db.insertTimetable(updatedTimetable);
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error updating timetable: $e')),
-                );
-                // Revert drag
-                setState(() {
-                  _gridItems[to] = _gridItems[from];
-                  _gridItems[from] = dragged;
-                });
-              }
-            }
-          });
-        },
-        dragFeedback: (index) => Transform.scale(
-          scale: 1.1,
-          child: Material(
-            elevation: 8,
-            child: Container(
-              width: 200,
-              height: 50,
-              child: _gridItems[index].child,
-            ),
-          ),
-        ),
-        dragPlaceHolder: (index) => PlaceHolderWidget(
-          child: AnimatedContainer(
-            duration: Duration(milliseconds: 300),
-            color: Colors.blue[100],
-          ),
-        ),
-        onTap: (index) {
-          if (_gridItems[index].child is AnimatedContainer) {
-            _showAddTimetableDialog(context, index);
-          }
-        },
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _addTimetable(context),
+        child: const Icon(Icons.add),
       ),
     );
   }
-}
 
-class TimetableCard extends StatelessWidget {
-  final Timetable timetable;
-
-  TimetableCard({this.timetable});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: Duration(milliseconds: 300),
-      color: Colors.blue[200],
-      child: ListTile(
-        title: Text(timetable.timeSlot.split(' ')[1],
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: FutureBuilder<Map<String, dynamic>>(
-          future: Provider.of<DatabaseService>(context)._db.query('classes',
-              where: 'id = ?',
-              whereArgs: [
-                timetable.classId
-              ]).then((maps) => maps.isNotEmpty ? maps[0] : {}),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) return Text('Loading...');
-            return Text(
-                '${snapshot.data['subject']} (Grade ${snapshot.data['grade']})');
-          },
+  void _showLearnersDialog(BuildContext context, Class classObj) {
+    final classLearners =
+        _learners.where((l) => classObj.learnerIds.contains(l.id)).toList();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Learners'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: classLearners.isEmpty
+              ? const Text('No learners in this class')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: classLearners.length,
+                  itemBuilder: (context, index) {
+                    final learner = classLearners[index];
+                    return ListTile(
+                      title: Text(learner.name),
+                      subtitle: Text('Grade ${learner.grade}'),
+                    );
+                  },
+                ),
         ),
-        trailing: Text('${timetable.learnerIds.length} Learners'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
-}
 
-class LearnerSelectionDialog extends StatefulWidget {
-  final List<Learner> learners;
-
-  LearnerSelectionDialog({this.learners});
-
-  @override
-  _LearnerSelectionDialogState createState() => _LearnerSelectionDialogState();
-}
-
-class _LearnerSelectionDialogState extends State<LearnerSelectionDialog> {
-  List<String> selectedLearnerIds = [];
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Select Learners'),
-      content: Container(
-        width: double.maxFinite,
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: widget.learners.length,
-          itemBuilder: (context, index) {
-            final learner = widget.learners[index];
-            return CheckboxListTile(
-              title: Text(learner.name),
-              value: selectedLearnerIds.contains(learner.id),
-              onChanged: (value) {
-                setState(() {
-                  if (value) {
-                    selectedLearnerIds.add(learner.id);
-                  } else {
-                    selectedLearnerIds.remove(learner.id);
-                  }
-                });
-              },
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(context, selectedLearnerIds),
-          child: Text('Confirm'),
-        ),
-      ],
+  void _addTimetable(BuildContext context) async {
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final newTimetable = Timetable(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      teacherId: widget.teacherId,
+      classId: _classes.isNotEmpty ? _classes[0].id : '',
+      subject: 'New Subject',
+      startTime: '09:00',
+      endTime: '10:00',
+      day: 'Monday',
+      timeSlot: 'Morning',
     );
+    await dbService.insertTimetable(newTimetable);
+    if (mounted) {
+      await _loadData();
+    }
+  }
+
+  void _editTimetable(BuildContext context, Timetable timetable) async {
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final updatedTimetable = Timetable(
+      id: timetable.id,
+      teacherId: timetable.teacherId,
+      classId: timetable.classId,
+      subject: '${timetable.subject} (Edited)',
+      startTime: timetable.startTime,
+      endTime: timetable.endTime,
+      day: timetable.day,
+      timeSlot: timetable.timeSlot,
+    );
+    await dbService.insertTimetable(updatedTimetable);
+    if (mounted) {
+      await _loadData();
+    }
   }
 }

@@ -1,164 +1,124 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
-import 'package:pdf_render/pdf_render.dart';
-import '../services/database_service.dart';
-import '../models.dart';
-import '../widgets/canvas_widget.dart';
+import 'dart:convert';
+import '../../services/database_service.dart';
+import '../../models/learnertimetable.dart';
+import '../../models/question.dart';
+import '../../widgets/canvas_widget.dart';
 
 class LearnerCanvasScreen extends StatefulWidget {
   final String learnerId;
 
-  LearnerCanvasScreen({required this.learnerId});
+  const LearnerCanvasScreen({Key? key, required this.learnerId})
+      : super(key: key);
 
   @override
-  _LearnerCanvasScreenState createState() => _LearnerCanvasScreenState();
+  State<LearnerCanvasScreen> createState() => _LearnerCanvasScreenState();
 }
 
 class _LearnerCanvasScreenState extends State<LearnerCanvasScreen> {
   List<LearnerTimetable> _timetables = [];
-  LearnerTimetable? _selectedTimetable;
-  List<Question> _questions = [];
-  Map<String, String> _answers = {};
-  int _totalPages = 0;
+  Map<String, dynamic> _answerData = {};
+  Question? _currentQuestion;
 
   @override
   void initState() {
     super.initState();
     _loadTimetables();
+    _loadQuestion();
   }
 
   Future<void> _loadTimetables() async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    final timetables = await db.getLearnerTimetable(widget.learnerId);
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final timetables = await dbService.getLearnerTimetables(widget.learnerId);
     setState(() {
       _timetables = timetables;
-      _selectedTimetable = timetables.isNotEmpty ? timetables[0] : null;
-      if (_selectedTimetable != null) {
-        _loadQuestions();
-      }
     });
   }
 
-  Future<void> _loadQuestions() async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    final questions = await db.getQuestionsByTimetable(_selectedTimetable!.id);
-    final answers = await db
-        .getAnswersByQuestion(questions.isNotEmpty ? questions[0].id : '');
-    int maxPages = questions.length;
-    for (var question in questions) {
-      final json = jsonDecode(question.content);
-      final assets =
-          (json['assets'] as List).map((j) => Asset.fromJson(j)).toList();
-      final pdfAssets = assets.where((a) => a.type == 'pdf').toList();
-      for (var pdf in pdfAssets) {
-        final doc = await PdfDocument.openData(base64Decode(pdf.data));
-        maxPages = maxPages > doc.pageCount ? maxPages : doc.pageCount;
-        doc.dispose();
-      }
-    }
+  Future<void> _loadQuestion() async {
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final questions = await dbService
+        .getQuestions(_timetables.isNotEmpty ? _timetables[0].classId : '');
     setState(() {
-      _questions = questions;
-      _answers = {
-        for (var answer
-            in answers.where((a) => a.learnerId == widget.learnerId))
-          answer.questionId: answer.content
-      };
-      _totalPages = maxPages;
+      _currentQuestion = questions.isNotEmpty
+          ? questions[0]
+          : Question(
+              id: 'q001',
+              classId: _timetables.isNotEmpty ? _timetables[0].classId : '',
+              timetableId: _timetables.isNotEmpty ? _timetables[0].id : '',
+              content: 'Draw the water cycle',
+            );
     });
   }
 
-  Future<void> _submitAnswer(
-      Question question, String canvasData, Analytics? analytics) async {
-    final db = Provider.of<DatabaseService>(context, listen: false);
-    final answer = Answer(
-      id: Uuid().v4(),
-      questionId: question.id,
-      learnerId: widget.learnerId,
-      content: canvasData,
-      submitted_at: DateTime.now().millisecondsSinceEpoch,
-    );
-    try {
-      await db.insertAnswer(answer);
-      if (analytics != null) {
-        analytics.questionId = question.id;
-        analytics.learnerId = widget.learnerId;
-        await db.insertAnalytics(analytics);
-      }
-      setState(() {
-        _answers[question.id] = canvasData;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Answer submitted')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    }
+  void _saveAnswer() {
+    // Placeholder: Save answer to database (requires Answer model and table)
+    // final dbService = Provider.of<DatabaseService>(context, listen: false);
+    // final answerJson = jsonEncode(_answerData);
+    // await dbService.insertAnswer(Answer(
+    //   id: 'a${DateTime.now().millisecondsSinceEpoch}',
+    //   questionId: _currentQuestion!.id,
+    //   learnerId: widget.learnerId,
+    //   answer: answerJson,
+    // ));
+    // ignore: avoid_print
+    print('Answer saved: $_answerData');
+  }
+
+  void _updateAnswer(Map<String, dynamic> data) {
+    setState(() {
+      _answerData = data;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Learner Canvas')),
+      appBar: AppBar(title: const Text('Learner Canvas')),
       body: Column(
         children: [
-          DropdownButton<LearnerTimetable>(
-            hint: Text('Select Timetable'),
-            value: _selectedTimetable,
-            items: _timetables
-                .map((t) => DropdownMenuItem(
-                      value: t,
-                      child: Text(t.timeSlot),
-                    ))
-                .toList(),
-            onChanged: (value) {
-              setState(() {
-                _selectedTimetable = value;
-                _loadQuestions();
-              });
-            },
-          ),
+          // Display timetable
           Expanded(
-            child: _questions.isEmpty
-                ? Center(child: Text('No questions available'))
-                : PageView.builder(
-                    itemCount: _totalPages,
-                    itemBuilder: (context, pageIndex) {
-                      final questionIndex = pageIndex % _questions.length;
-                      final question = _questions[questionIndex];
-                      final initialData = _answers[question.id];
-                      return AnimatedOpacity(
-                        opacity: 1.0,
-                        duration: Duration(milliseconds: 300),
-                        child: Column(
-                          children: [
-                            Padding(
-                              padding: EdgeInsets.all(8.0),
-                              child: Text('Question ${pageIndex + 1}'),
-                            ),
-                            Expanded(
-                              child: CanvasWidget(
-                                initialData: question.content,
-                                readOnly: true,
-                                pageIndex: pageIndex,
-                                onChanged: (_, __) {},
-                              ),
-                            ),
-                            Divider(),
-                            Expanded(
-                              child: CanvasWidget(
-                                initialData: initialData,
-                                pageIndex: pageIndex,
-                                onChanged: (data, analytics) =>
-                                    _submitAnswer(question, data, analytics),
-                              ),
-                            ),
-                          ],
+            flex: 1,
+            child: ListView.builder(
+              itemCount: _timetables.length,
+              itemBuilder: (context, index) {
+                final timetable = _timetables[index];
+                return ListTile(
+                  title: Text('Class: ${timetable.classId}'),
+                  subtitle: Text('Time: ${timetable.timeSlot}'),
+                );
+              },
+            ),
+          ),
+          // Display question and canvas
+          Expanded(
+            flex: 2,
+            child: _currentQuestion == null
+                ? const Center(child: Text('No question available'))
+                : Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          _currentQuestion!.content,
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
                         ),
-                      );
-                    },
+                      ),
+                      Expanded(
+                        child: CanvasWidget(
+                          learnerId: widget.learnerId,
+                          onSave: _saveAnswer,
+                          onUpdate: _updateAnswer,
+                        ),
+                      ),
+                      ElevatedButton(
+                        onPressed: _saveAnswer,
+                        child: const Text('Submit Answer'),
+                      ),
+                    ],
                   ),
           ),
         ],

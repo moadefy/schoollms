@@ -1,10 +1,17 @@
+import 'package:sqflite/sqflite.dart';
+
 class LearnerTimetable {
   final String id;
   final String learnerId;
   final String classId;
   final String timeSlot;
 
-  LearnerTimetable({this.id, this.learnerId, this.classId, this.timeSlot});
+  LearnerTimetable({
+    required this.id,
+    required this.learnerId,
+    required this.classId,
+    required this.timeSlot,
+  });
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -12,6 +19,15 @@ class LearnerTimetable {
         'classId': classId,
         'timeSlot': timeSlot,
       };
+
+  static LearnerTimetable fromMap(Map<String, dynamic> map) {
+    return LearnerTimetable(
+      id: map['id'] as String? ?? '',
+      learnerId: map['learnerId'] as String? ?? '',
+      classId: map['classId'] as String? ?? '',
+      timeSlot: map['timeSlot'] as String? ?? '',
+    );
+  }
 
   static Future<void> createTable(Database db) async {
     await db.execute('''
