@@ -9,6 +9,9 @@ import 'package:schoollms/services/database_service.dart';
 import 'package:schoollms/utils/crypto_utils.dart';
 import 'package:schoollms/utils/queue_manager.dart';
 import 'package:schoollms/widgets/canvas_widget.dart'; // Import for Stroke
+import 'package:schoollms/models/learnertimetable.dart'; // Import for LearnerTimetable
+import 'package:schoollms/models/question.dart'; // Import for Question
+import 'package:schoollms/models/answer.dart'; // Import for Answer
 
 class SyncService {
   ServerSocket? _server;
@@ -34,6 +37,7 @@ class SyncService {
       await WiFiForIoTPlugin.setEnabled(true, shouldOpenSettings: true);
       // Create hotspot (deprecated for Android SDK 26+, manual setup required for newer versions)
       await WiFiForIoTPlugin.setWiFiAPEnabled(true);
+      // Note: setWiFiAPSSID and setWiFiAPPreSharedKey are deprecated < Android SDK 26
       await WiFiForIoTPlugin.setWiFiAPSSID(ssid);
       await WiFiForIoTPlugin.setWiFiAPPreSharedKey(psk);
     } catch (e) {
@@ -126,7 +130,6 @@ class SyncService {
     final questions = timetable != null
         ? await _dbService.getQuestionsByTimetable(timetable.id)
         : [];
-    final answers = await _dbService.getAnswersByQuestion('');
 
     final batchedSyncs = <String, List<Map<String, dynamic>>>{};
     for (var sync in pendingSyncs) {
@@ -140,7 +143,7 @@ class SyncService {
       'strokes': questions.expand((q) {
         final json = jsonDecode(q.content);
         return (json['strokes'] as List)
-            .map((s) => Stroke.fromJson(s).toProto())
+            .map((s) => Stroke.fromJson(s as Map<String, dynamic>).toProto())
             .where((s) => s.points?.isNotEmpty ?? false);
       }).toList(),
       'assets': questions.expand((q) {
@@ -159,7 +162,6 @@ class SyncService {
     final syncData = {
       'timetables': learnerTimetables.map((t) => t.toMap()).toList(),
       'questions': questions.map((q) => q.toMap()).toList(),
-      'answers': answers.map((a) => a.toMap()).toList(),
       'batched_pending': batchedSyncs,
       'canvas_data': canvasData,
     };
@@ -202,14 +204,14 @@ class SyncService {
 
         await _mdnsClient!.start();
         final serviceName = 'Teacher_$teacherId.$classId.$serviceType.local';
-        for (final ptr in _mdnsClient!.lookup<PtrResourceRecord>(
+        await for (final ptr in _mdnsClient!.lookup<PtrResourceRecord>(
           ResourceRecordQuery.serverPointer(serviceType),
         )) {
           if (ptr.domainName == serviceName) {
-            for (final srv in _mdnsClient!.lookup<SrvResourceRecord>(
+            await for (final srv in _mdnsClient!.lookup<SrvResourceRecord>(
               ResourceRecordQuery.service(serviceName),
             )) {
-              for (final txt in _mdnsClient!.lookup<TxtResourceRecord>(
+              await for (final txt in _mdnsClient!.lookup<TxtResourceRecord>(
                 ResourceRecordQuery.text(serviceName),
               )) {
                 final txtData = txt.text
@@ -249,7 +251,7 @@ class SyncService {
     final records = await _mdnsClient!.lookup<IPAddressResourceRecord>(
       ResourceRecordQuery.addressIPv4(hostname),
     );
-    return records.firstWhere((r) => r.address != null).address.address;
+    return (await records.firstWhere((r) => r.address != null)).address.address;
   }
 
   bool _isCacheValid(int lastDiscovered) {
@@ -342,11 +344,8 @@ class SyncService {
     batchedPending.forEach((key, batch) {
       for (var item in batch) {
         final data = item['data'];
-        _dbService._db.insert(
-          item['table_name'],
-          data,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        _dbService.insertData(item['table_name'], data,
+            conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }

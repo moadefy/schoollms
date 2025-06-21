@@ -8,6 +8,7 @@ dependencies:
   flutter:
     sdk: flutter
   sqflite: ^2.3.3+1 # Null-safe, latest
+  vector_math: ^2.1.4
   table_calendar: ^3.0.9 # Null-safe, latest
   provider: ^6.1.2 # Null-safe, latest
   uuid: ^4.5.0 # Null-safe, latest

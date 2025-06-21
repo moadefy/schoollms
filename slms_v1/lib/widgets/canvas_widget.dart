@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:ui' as ui;
+import 'dart:typed_data'; // Added for Float64List
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf_render/pdf_render.dart';
 import 'package:schoollms/services/database_service.dart';
 import 'package:provider/provider.dart';
-import 'package:vector_math/vector_math.dart'; // Added for Vector3
+import 'package:vector_math/vector_math.dart'
+    as vector; // Added prefix for vector_math
 
 // Placeholder for Protobuf-generated classes (generate from stroke.proto)
 class ProtoPoint {
@@ -90,6 +92,27 @@ class Stroke {
       'strokeWidth': strokeWidth,
     };
   }
+
+  factory Stroke.fromJson(Map<String, dynamic> json) {
+    final points = (json['points'] as List<dynamic>?)
+            ?.map((p) => ProtoPoint(p['x'] as double, p['y'] as double))
+            .map((protoPoint) => Offset(protoPoint.x, protoPoint.y))
+            .toList() ??
+        [];
+    return Stroke(
+      points,
+      Color(json['color'] as int? ?? 0xFF000000), // Replaced .value
+      json['strokeWidth'] as double? ?? 1.0,
+    );
+  }
+
+  ProtoStroke toProto() {
+    return ProtoStroke(
+      points.map((offset) => ProtoPoint(offset.dx, offset.dy)).toList(),
+      color.value,
+      strokeWidth,
+    );
+  }
 }
 
 @immutable
@@ -113,7 +136,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   final List<Stroke> _strokes = [];
   final List<CanvasAsset> _assets = [];
   Stroke? _currentStroke;
-  Matrix4 _transform = Matrix4.identity();
+  vector.Matrix4 _transform = vector.Matrix4.identity(); // Prefixed Matrix4
   double _scale = 1.0;
   Offset _panOffset = Offset.zero;
   PdfDocument? _currentPdf;
@@ -140,7 +163,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
             (data['points'] as List)
                 .map((p) => Offset(p['x'] as double, p['y'] as double))
                 .toList(),
-            Color(data['color'] as int),
+            Color((data['color'] as int?) ?? 0xFF000000), // Replaced .value
             data['strokeWidth'] as double,
           )));
       _assets.addAll(assetsData.map((data) => CanvasAsset(
@@ -358,9 +381,11 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   Offset _transformPoint(Offset position) {
+    final vector.Vector3 pointVector = vector.Vector3(
+        position.dx, position.dy, 0); // Renamed to avoid shadowing
     final matrix = _transform.clone()..invert();
-    final vector = matrix.transform3(Vector3(position.dx, position.dy, 0));
-    return Offset(vector.x, vector.y);
+    final transformedVector = matrix.transform3(pointVector);
+    return Offset(transformedVector.x, transformedVector.y);
   }
 
   void _onScaleStart(ScaleStartDetails details) {
@@ -372,7 +397,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   void _onScaleUpdate(ScaleUpdateDetails details) {
     setState(() {
       _scale *= details.scale;
-      _transform = Matrix4.identity()
+      _transform = vector.Matrix4.identity() // Prefixed Matrix4
         ..scale(_scale)
         ..translate(details.focalPoint.dx - _panOffset.dx,
             details.focalPoint.dy - _panOffset.dy);
@@ -465,7 +490,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
               if (_attendance != null && _attendanceDate != null)
                 Text(
                   'Attendance: $_attendance at ${DateTime.fromMillisecondsSinceEpoch(_attendanceDate!).toLocal()}',
-                  style: TextStyle(fontSize: 12),
+                  style: const TextStyle(fontSize: 12), // Added const
                 ),
             ],
           ),
@@ -478,7 +503,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 class CanvasPainter extends CustomPainter {
   final List<Stroke> strokes;
   final List<CanvasAsset> assets;
-  final Matrix4 transform;
+  final vector.Matrix4 transform; // Prefixed Matrix4
   final ui.Image? currentImage;
 
   CanvasPainter({
@@ -491,7 +516,9 @@ class CanvasPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-    canvas.transform(transform.storage);
+    // Convert Float32List to Float64List for compatibility
+    final Float64List transformMatrix = Float64List.fromList(transform.storage);
+    canvas.transform(transformMatrix);
 
     // Draw assets (images/PDFs)
     for (final asset in assets) {

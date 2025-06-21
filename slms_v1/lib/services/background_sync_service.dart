@@ -1,8 +1,10 @@
 import 'dart:async';
-import 'package:provider/provider.dart';
-import 'package:school_app/services/database_service.dart';
-import 'package:school_app/services/sync_service.dart';
-import 'package:school_app/providers/sync_state.dart';
+import 'package:flutter/material.dart'; // For BuildContext and TimeOfDay
+import 'package:provider/provider.dart'; // For Provider
+import 'package:intl/intl.dart'; // For TimeOfDay formatting
+import 'package:schoollms/services/database_service.dart';
+import 'package:schoollms/services/sync_service.dart';
+import 'package:schoollms/providers/sync_state.dart';
 
 class BackgroundSyncService {
   final DatabaseService _dbService;
@@ -13,7 +15,7 @@ class BackgroundSyncService {
 
   void startBackgroundSync(String learnerId, BuildContext context) {
     _syncTimer?.cancel();
-    _syncTimer = Timer.periodic(Duration(minutes: 5), (timer) async {
+    _syncTimer = Timer.periodic(const Duration(minutes: 5), (timer) async {
       try {
         final timetables = await _dbService.getLearnerTimetable(learnerId);
         final now = DateTime.now();
@@ -22,10 +24,9 @@ class BackgroundSyncService {
           final startTime = _parseTime(timeSlot[0], now);
           final endTime = _parseTime(timeSlot[1], now);
           if (now.isAfter(startTime) && now.isBefore(endTime)) {
-            final classData = await _dbService._db.query('classes',
-                where: 'id = ?', whereArgs: [timetable.classId]);
-            if (classData.isNotEmpty) {
-              final teacherId = classData[0]['teacherId'];
+            final classData = await _dbService.getClassById(timetable.classId);
+            if (classData != null && classData['teacherId'] != null) {
+              final teacherId = classData['teacherId'] as String;
               await _syncService.connectLearner(
                   teacherId, timetable.classId, learnerId);
               Provider.of<SyncState>(context, listen: false).updateSyncStatus(

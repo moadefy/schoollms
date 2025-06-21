@@ -125,7 +125,7 @@ class DatabaseService {
     }
   }
 
-  Future<void> _registerLearnerDevice(Database db, String learnerId,
+  Future<void> _registerLearnerDevice(DatabaseExecutor db, String learnerId,
       String deviceId, String teacherId, String classId) async {
     final psk = _generatePSK(learnerId, teacherId, classId);
     await db.insert(
@@ -363,12 +363,13 @@ class DatabaseService {
         await _generateLearnerTimetables(txn, timetable);
         final classData = await txn
             .query('classes', where: 'id = ?', whereArgs: [timetable.classId]);
-        if (classData.isNotEmpty) {
-          final teacherId = classData[0]['teacherId'] as String;
-          for (final learnerId in timetable.learnerIds) {
-            await _registerLearnerDevice(txn, learnerId, 'device_$learnerId',
-                teacherId, timetable.classId);
-          }
+        if (classData.isEmpty) {
+          throw Exception('Invalid class ID');
+        }
+        final teacherId = classData[0]['teacherId'] as String;
+        for (final learnerId in timetable.learnerIds) {
+          await _registerLearnerDevice(txn, learnerId, 'device_$learnerId',
+              teacherId, timetable.classId);
         }
       });
     } catch (e) {
@@ -398,17 +399,30 @@ class DatabaseService {
       DatabaseExecutor txn, Timetable timetable) async {
     try {
       for (final learnerId in timetable.learnerIds) {
+        // Use a placeholder id (0) since the constructor requires int
         final learnerTimetable = LearnerTimetable(
-          id: null, // Let database generate id via AUTOINCREMENT
+          id: 0, // Placeholder, will be overridden by AUTOINCREMENT
           learnerId: learnerId,
           classId: timetable.classId,
           timeSlot: timetable.timeSlot,
           status: 'active', // Initialize with active status
         );
-        await txn.insert('learner_timetables', learnerTimetable.toMap(),
+        // Insert and get the auto-incremented id
+        final id = await txn.insert(
+            'learner_timetables', learnerTimetable.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
+        // Update the learnerTimetable with the actual id (optional, for sync)
+        final updatedTimetable = LearnerTimetable(
+          id: id,
+          learnerId: learnerId,
+          classId: timetable.classId,
+          timeSlot: timetable.timeSlot,
+          status: 'active',
+          attendance: null,
+          attendanceDate: null,
+        );
         await _queueSync(
-            txn, 'learner_timetables', 'insert', learnerTimetable.toMap());
+            txn, 'learner_timetables', 'insert', updatedTimetable.toMap());
       }
     } catch (e) {
       throw Exception('Failed to generate learner timetables: $e');
@@ -434,6 +448,19 @@ class DatabaseService {
           .toList();
     } catch (e) {
       throw Exception('Failed to fetch learner timetable: $e');
+    }
+  }
+
+  Future<void> insertLearnerTimetable(LearnerTimetable learnerTimetable) async {
+    try {
+      await _db!.transaction((txn) async {
+        await txn.insert('learner_timetables', learnerTimetable.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        await _queueSync(
+            txn, 'learner_timetables', 'insert', learnerTimetable.toMap());
+      });
+    } catch (e) {
+      throw Exception('Failed to insert learner timetable: $e');
     }
   }
 
@@ -464,7 +491,7 @@ class DatabaseService {
                 timetableId: map['timetableId'] as int,
                 classId: map['classId'] as String,
                 content: map['content'] as String,
-                pdfPage: map['pdfPage'] as int,
+                pdfPage: map['pdfPage'] as int?,
               ))
           .toList();
     } catch (e) {
@@ -800,6 +827,26 @@ class DatabaseService {
       });
     } catch (e) {
       throw Exception('Failed to save assets: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getClassById(String classId) async {
+    try {
+      final maps =
+          await _db!.query('classes', where: 'id = ?', whereArgs: [classId]);
+      return maps.isNotEmpty ? maps.first : null;
+    } catch (e) {
+      throw Exception('Failed to fetch class: $e');
+    }
+  }
+
+  Future<void> insertData(String table, Map<String, dynamic> data,
+      {ConflictAlgorithm conflictAlgorithm = ConflictAlgorithm.replace}) async {
+    try {
+      await _db!.insert(table, data, conflictAlgorithm: conflictAlgorithm);
+      await _queueSync(_db!, table, 'insert', data);
+    } catch (e) {
+      throw Exception('Failed to insert data into $table: $e');
     }
   }
 }

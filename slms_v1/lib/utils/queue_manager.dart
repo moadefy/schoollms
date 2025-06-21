@@ -15,11 +15,13 @@ class QueueManager {
   void addLearner(String learnerId, {bool hasPendingChanges = false}) {
     final priority = hasPendingChanges ? 1 : 0;
     if (!_queue.any((item) => item.learnerId == learnerId)) {
-      _queue.add(PriorityQueueItem(learnerId, priority, DateTime.now().millisecondsSinceEpoch));
+      _queue.add(PriorityQueueItem(
+          learnerId, priority, DateTime.now().millisecondsSinceEpoch));
     }
   }
 
-  String getNextLearner() {
+  String? getNextLearner() {
+    // Changed from String to String?
     if (_queue.isEmpty) return null;
     _queue.sort((a, b) {
       if (a.priority != b.priority) return b.priority.compareTo(a.priority);

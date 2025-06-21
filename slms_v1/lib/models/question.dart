@@ -25,6 +25,16 @@ class Question {
     };
   }
 
+  factory Question.fromMap(Map<String, dynamic> map) {
+    return Question(
+      id: map['id'] as String,
+      timetableId: map['timetableId'] as int,
+      classId: map['classId'] as String,
+      content: map['content'] as String,
+      pdfPage: map['pdfPage'] as int?,
+    );
+  }
+
   static Future<void> createTable(Database db) async {
     await db.execute('''
       CREATE TABLE questions (
