@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf_render/pdf_render.dart';
 import 'package:schoollms/services/database_service.dart';
 import 'package:provider/provider.dart';
+import 'package:vector_math/vector_math.dart'; // Added for Vector3
 
 // Placeholder for Protobuf-generated classes (generate from stroke.proto)
 class ProtoPoint {
@@ -64,6 +64,16 @@ class CanvasAsset {
       scale: scale ?? this.scale,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'path': path,
+        'pageIndex': pageIndex,
+        'positionX': position.dx,
+        'positionY': position.dy,
+        'scale': scale,
+      };
 }
 
 class Stroke {
@@ -109,11 +119,15 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   PdfDocument? _currentPdf;
   ui.Image? _currentImage;
   int _currentPageIndex = 0;
+  String _status = 'active'; // Learner status
+  String? _attendance; // Attendance status
+  int? _attendanceDate; // Attendance timestamp
 
   @override
   void initState() {
     super.initState();
     _loadCanvasData();
+    _loadLearnerTimetableData();
   }
 
   Future<void> _loadCanvasData() async {
@@ -124,20 +138,38 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     setState(() {
       _strokes.addAll(strokesData.map((data) => Stroke(
             (data['points'] as List)
-                .map((p) => Offset(p['x'], p['y']))
+                .map((p) => Offset(p['x'] as double, p['y'] as double))
                 .toList(),
-            Color(data['color']),
-            data['strokeWidth'],
+            Color(data['color'] as int),
+            data['strokeWidth'] as double,
           )));
       _assets.addAll(assetsData.map((data) => CanvasAsset(
-            id: data['id'],
-            type: data['type'],
-            path: data['path'],
-            pageIndex: data['pageIndex'],
-            position: Offset(data['positionX'], data['positionY']),
-            scale: data['scale'],
+            id: data['id'] as String,
+            type: data['type'] as String,
+            path: data['path'] as String,
+            pageIndex: data['pageIndex'] as int,
+            position: Offset(
+                data['positionX'] as double, data['positionY'] as double),
+            scale: data['scale'] as double,
           )));
     });
+  }
+
+  Future<void> _loadLearnerTimetableData() async {
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final timetables = await dbService.getLearnerTimetable(widget.learnerId);
+    if (timetables.isNotEmpty) {
+      final timetable = timetables.firstWhere(
+        (t) =>
+            t.timeSlot.contains(DateTime.now().toIso8601String().split('T')[0]),
+        orElse: () => timetables.first,
+      );
+      setState(() {
+        _status = timetable.status;
+        _attendance = timetable.attendance;
+        _attendanceDate = timetable.attendanceDate;
+      });
+    }
   }
 
   void _startStroke(Offset position) {
@@ -249,14 +281,18 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   void _nextPage() {
     if (_currentPdf == null || _currentPageIndex >= _currentPdf!.pageCount - 1)
       return;
-    _renderPdfPage(_currentPageIndex + 1);
-    _updateAssetPage(_currentPageIndex + 1);
+    {
+      _renderPdfPage(_currentPageIndex + 1);
+      _updateAssetPage(_currentPageIndex + 1);
+    }
   }
 
   void _previousPage() {
     if (_currentPageIndex <= 0) return;
-    _renderPdfPage(_currentPageIndex - 1);
-    _updateAssetPage(_currentPageIndex - 1);
+    {
+      _renderPdfPage(_currentPageIndex - 1);
+      _updateAssetPage(_currentPageIndex - 1);
+    }
   }
 
   void _updateAssetPage(int pageIndex) {
@@ -271,17 +307,54 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     _saveAssets();
   }
 
-  void _saveStrokes() async {
+  Future<void> _saveStrokes() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
     await dbService.saveStrokes(widget.learnerId, _strokes);
+    await _saveLearnerTimetableData();
     widget.onSave();
     widget.onUpdate({'strokes': _strokes.map((s) => s.toJson()).toList()});
   }
 
-  void _saveAssets() async {
+  Future<void> _saveAssets() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
     await dbService.saveAssets(widget.learnerId, _assets);
+    await _saveLearnerTimetableData();
     widget.onSave();
+  }
+
+  Future<void> _saveLearnerTimetableData() async {
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final timetables = await dbService.getLearnerTimetable(widget.learnerId);
+    if (timetables.isNotEmpty) {
+      final timetable = timetables.firstWhere(
+        (t) =>
+            t.timeSlot.contains(DateTime.now().toIso8601String().split('T')[0]),
+        orElse: () => timetables.first,
+      );
+      // Use timetable.id as int
+      final int timetableId = timetable.id;
+      await dbService.updateLearnerTimetableStatus(
+          widget.learnerId, timetableId, _status);
+      if (_attendance != null && _attendanceDate != null) {
+        await dbService.recordAttendance(
+            widget.learnerId, timetableId, _attendance!, _attendanceDate!);
+      }
+    }
+  }
+
+  void _setStatus(String status) {
+    setState(() {
+      _status = status;
+    });
+    _saveLearnerTimetableData();
+  }
+
+  void _setAttendance(String attendance) {
+    setState(() {
+      _attendance = attendance;
+      _attendanceDate = DateTime.now().millisecondsSinceEpoch;
+    });
+    _saveLearnerTimetableData();
   }
 
   Offset _transformPoint(Offset position) {
@@ -358,6 +431,42 @@ class _CanvasWidgetState extends State<CanvasWidget> {
                   onPressed: _nextPage,
                 ),
               ],
+              const SizedBox(height: 10),
+              DropdownButton<String>(
+                value: _status,
+                items: const [
+                  DropdownMenuItem(value: 'active', child: Text('Active')),
+                  DropdownMenuItem(value: 'absent', child: Text('Absent')),
+                  DropdownMenuItem(value: 'pending', child: Text('Pending')),
+                ],
+                onChanged: (value) => _setStatus(value!),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.check_circle),
+                    onPressed: () => _setAttendance('present'),
+                    color: _attendance == 'present' ? Colors.green : null,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.cancel),
+                    onPressed: () => _setAttendance('absent'),
+                    color: _attendance == 'absent' ? Colors.red : null,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.access_time),
+                    onPressed: () => _setAttendance('late'),
+                    color: _attendance == 'late' ? Colors.orange : null,
+                  ),
+                ],
+              ),
+              if (_attendance != null && _attendanceDate != null)
+                Text(
+                  'Attendance: $_attendance at ${DateTime.fromMillisecondsSinceEpoch(_attendanceDate!).toLocal()}',
+                  style: TextStyle(fontSize: 12),
+                ),
             ],
           ),
         ),

@@ -2,7 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 class Question {
   final String id;
-  final String timetableId;
+  final int timetableId; // Changed from String to int
   final String classId;
   final String content; // JSON-encoded CanvasElement list
   final int? pdfPage; // Null for non-PDF questions
@@ -18,7 +18,7 @@ class Question {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'timetableId': timetableId,
+      'timetableId': timetableId, // Changed from String to int
       'classId': classId,
       'content': content,
       'pdfPage': pdfPage,
@@ -29,7 +29,7 @@ class Question {
     await db.execute('''
       CREATE TABLE questions (
         id TEXT PRIMARY KEY,
-        timetableId TEXT,
+        timetableId INTEGER, -- Changed from TEXT to INTEGER
         classId TEXT,
         content TEXT,
         pdfPage INTEGER

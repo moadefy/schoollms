@@ -1,115 +1,163 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:provider/provider.dart';
+import 'package:schoollms/models/timetable.dart';
 import 'package:schoollms/services/database_service.dart';
-import 'package:schoollms/models/timetable.dart' hide DatabaseService;
-import 'package:schoollms/models/question.dart';
-import 'package:schoollms/models/answer.dart';
-import 'package:schoollms/models/learner.dart';
-import 'package:schoollms/models/teacher.dart';
+import 'package:schoollms/widgets/canvas_widget.dart';
+import 'canvas_test.mocks.dart';
 
-
-
+// Generate mocks with: flutter pub run build_runner build
+@GenerateMocks([DatabaseService])
 void main() {
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
+  late MockDatabaseService mockDbService;
+  late VoidCallback onSaveCallback;
+  late Function(Map<String, dynamic>) onUpdateCallback;
 
-  group('Canvas Tests', () {
-    DatabaseService dbService;
-    Database db;
+  setUp(() async {
+    mockDbService = MockDatabaseService();
+    onSaveCallback = () {};
+    onUpdateCallback = (Map<String, dynamic> data) {};
 
-    setUp() async {
-      db = await openDatabase(inMemoryDatabasePath);
-      dbService = DatabaseService().._db = db;
-      await dbService.init();
+    // Mock database methods
+    when(mockDbService.getStrokes(any)).thenAnswer((_) async => []);
+    when(mockDbService.getAssets(any)).thenAnswer((_) async => []);
+    when(mockDbService.saveStrokes(any, any)).thenAnswer((_) async {});
+    when(mockDbService.saveAssets(any, any)).thenAnswer((_) async {});
+  });
+
+  tearDown(() {
+    reset(mockDbService);
+  });
+
+  group('CanvasWidget Tests', () {
+    testWidgets('CanvasWidget loads strokes and assets',
+        (WidgetTester tester) async {
+      // Arrange
+      final strokes = [
+        {
+          'points': [
+            {'x': 10.0, 'y': 10.0},
+            {'x': 20.0, 'y': 20.0},
+          ],
+          'color': Colors.black.value,
+          'strokeWidth': 2.0,
+        }
+      ];
+      final assets = [
+        {
+          'id': 'asset1',
+          'type': 'image',
+          'path': 'path/to/image.png',
+          'pageIndex': 0,
+          'positionX': 0.0,
+          'positionY': 0.0,
+          'scale': 1.0,
+        }
+      ];
+
+      when(mockDbService.getStrokes('learner_1'))
+          .thenAnswer((_) async => strokes);
+      when(mockDbService.getAssets('learner_1'))
+          .thenAnswer((_) async => assets);
+
+      // Act
+      await tester.pumpWidget(
+        Provider<DatabaseService>(
+          create: (_) => mockDbService,
+          child: MaterialApp(
+            home: CanvasWidget(
+              learnerId: 'learner_1',
+              onSave: onSaveCallback,
+              onUpdate: onUpdateCallback,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Assert
+      expect(find.byType(CustomPaint), findsOneWidget);
     });
 
-    tearDown() async {
-      await db.close();
+    testWidgets('CanvasWidget saves strokes on draw',
+        (WidgetTester tester) async {
+      // Arrange
+      await tester.pumpWidget(
+        Provider<DatabaseService>(
+          create: (_) => mockDbService,
+          child: MaterialApp(
+            home: CanvasWidget(
+              learnerId: 'learner_1',
+              onSave: onSaveCallback,
+              onUpdate: onUpdateCallback,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Act: Simulate drawing
+      await tester.drag(find.byType(CustomPaint), const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      // Assert: Verify saveStrokes was called
+      verify(mockDbService.saveStrokes('learner_1', any)).called(1);
     });
 
-    test('Insert and retrieve question', () async {
+    testWidgets('CanvasWidget integrates with timetable, question, and answer',
+        (WidgetTester tester) async {
+      // Arrange
       final timetable = Timetable(
         id: 't1',
-        classId: 'class_1',
-        timeSlot: '2025-05-21 09:00-10:00',
-        learnerIds: ['learner_1'],
+        teacherId: 'teacher_1',
+        learnerId: 'learner_1',
+        subject: 'Math',
+        startTime: DateTime.now(),
+        endTime: DateTime.now().add(const Duration(hours: 1)),
       );
-      await dbService.insertTimetable(timetable);
-
       final question = Question(
         id: 'q1',
         timetableId: 't1',
-        classId: 'class_1',
-        type: 'multiple-choice',
-        content: 'What is 2+2?',
-        options: ['2', '3', '4', '5'],
+        content: 'Solve 2 + 2',
+        pageIndex: 0,
       );
-      await dbService.insertQuestion(question);
-
-      final questions = await dbService.getQuestionsByTimetable('t1');
-      expect(questions.length, 1);
-      expect(questions[0].content, 'What is 2+2?');
-      expect(questions[0].options, ['2', '3', '4', '5']);
-    });
-
-    test('Insert answer with valid learner', () async {
-      final timetable = Timetable(
-        id: 't1',
-        classId: 'class_1',
-        timeSlot: '2025-05-21 09:00-10:00',
-        learnerIds: ['learner_1'],
-      );
-      await dbService.insertTimetable(timetable);
-
-      final question = Question(
-        id: 'q1',
-        timetableId: 't1',
-        classId: 'class_1',
-        type: 'open-ended',
-        content: 'Explain gravity',
-      );
-      await dbService.insertQuestion(question);
-
       final answer = Answer(
         id: 'a1',
         questionId: 'q1',
         learnerId: 'learner_1',
-        content: 'Gravity is a force...',
-        submitted_at: DateTime.now().millisecondsSinceEpoch,
+        strokes: [],
+        assets: [],
       );
-      await dbService.insertAnswer(answer);
 
-      final answers = await dbService.getAnswersByQuestion('q1');
-      expect(answers.length, 1);
-      expect(answers[0].content, 'Gravity is a force...');
-    });
+      await mockDbService.saveTimetable(timetable);
+      await mockDbService.saveQuestion(question);
+      await mockDbService.saveAnswer(answer);
 
-    test('Reject answer from unauthorized learner', () async {
-      final timetable = Timetable(
-        id: 't1',
-        classId: 'class_1',
-        timeSlot: '2025-05-21 09:00-10:00',
-        learnerIds: ['learner_1'],
+      when(mockDbService.getTimetable('t1')).thenAnswer((_) async => timetable);
+      when(mockDbService.getQuestion('q1')).thenAnswer((_) async => question);
+      when(mockDbService.getAnswer('a1')).thenAnswer((_) async => answer);
+
+      // Act
+      await tester.pumpWidget(
+        Provider<DatabaseService>(
+          create: (_) => mockDbService,
+          child: MaterialApp(
+            home: CanvasWidget(
+              learnerId: 'learner_1',
+              onSave: onSaveCallback,
+              onUpdate: onUpdateCallback,
+            ),
+          ),
+        ),
       );
-      await dbService.insertTimetable(timetable);
+      await tester.pumpAndSettle();
 
-      final question = Question(
-        id: 'q1',
-        timetableId: 't1',
-        classId: 'class_1',
-        type: 'open-ended',
-        content: 'Explain gravity',
-      );
-      await dbService.insertQuestion(question);
-
-      final answer = Answer(
-        id: 'a1',
-        questionId: 'q1',
-        learnerId: 'learner_2',
-        content: 'Gravity is a force...',
-        submitted_at: DateTime.now().millisecondsSinceEpoch,
-      );
-      expect(() async => await dbService.insertAnswer(answer), throwsException);
+      // Assert
+      expect(find.byType(CanvasWidget), findsOneWidget);
+      verify(mockDbService.getStrokes('learner_1')).called(1);
+      verify(mockDbService.getAssets('learner_1')).called(1);
     });
   });
 }

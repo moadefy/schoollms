@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:archive/archive.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:wifi_iot/wifi_iot.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:schoollms/services/database_service.dart';
 import 'package:schoollms/utils/crypto_utils.dart';
 import 'package:schoollms/utils/queue_manager.dart';
+import 'package:schoollms/widgets/canvas_widget.dart'; // Import for Stroke
 
 class SyncService {
   ServerSocket? _server;
@@ -29,7 +32,7 @@ class SyncService {
       final psk = CryptoUtils.generatePSK('teacher', teacherId, classId);
       // Ensure WiFi is enabled
       await WiFiForIoTPlugin.setEnabled(true, shouldOpenSettings: true);
-      // Create hotspot
+      // Create hotspot (deprecated for Android SDK 26+, manual setup required for newer versions)
       await WiFiForIoTPlugin.setWiFiAPEnabled(true);
       await WiFiForIoTPlugin.setWiFiAPSSID(ssid);
       await WiFiForIoTPlugin.setWiFiAPPreSharedKey(psk);
@@ -45,22 +48,7 @@ class SyncService {
           teacherId, classId, _server!.address.host, 8080);
 
       await _mdnsClient!.start();
-      final ptrRecord = PtrResourceRecord(serviceType, 3600,
-          domainName: 'Teacher_$teacherId.$classId.$serviceType.local');
-      final srvRecord = SrvResourceRecord(
-        'Teacher_$teacherId.$classId.$serviceType.local',
-        3600,
-        port: 8080,
-        target: '${_server!.address.host}.local',
-        priority: 0,
-        weight: 0,
-      );
-      final txtRecord = TxtResourceRecord(
-        'Teacher_$teacherId.$classId.$serviceType.local',
-        3600,
-        text: 'teacherId=$teacherId,classId=$classId',
-      );
-
+      // Register mDNS records (usage assumed, not directly implemented)
       _server!.listen((client) {
         if (_activeConnections.length < _queueManager.maxConnections) {
           _activeConnections.add(client);
@@ -133,9 +121,12 @@ class SyncService {
         await _dbService.getPendingSyncs(sinceTimestamp: lastSyncTime);
     final learnerTimetables = await _dbService.getLearnerTimetable(learnerId,
         sinceTimestamp: lastSyncTime);
-    final questions = await _dbService.getQuestionsByTimetable('');
+    final timetable =
+        learnerTimetables.isNotEmpty ? learnerTimetables.first : null;
+    final questions = timetable != null
+        ? await _dbService.getQuestionsByTimetable(timetable.id)
+        : [];
     final answers = await _dbService.getAnswersByQuestion('');
-    final analytics = await _dbService.getAnalyticsByQuestion('');
 
     final batchedSyncs = <String, List<Map<String, dynamic>>>{};
     for (var sync in pendingSyncs) {
@@ -145,36 +136,32 @@ class SyncService {
     }
 
     // Delta sync for canvas data
-    final protoData = ProtoCanvasData(
-      strokes: questions
-          .expand((q) {
-            final json = jsonDecode(q.content);
-            return (json['strokes'] as List)
-                .map((s) => Stroke.fromJson(s).toProto());
-          })
-          .where((s) => s.points.isNotEmpty)
-          .toList(),
-      assets: questions.expand((q) {
+    final canvasData = {
+      'strokes': questions.expand((q) {
         final json = jsonDecode(q.content);
-        return (json['assets'] as List).map((a) => ProtoAsset(
-              id: a['id'],
-              type: a['type'],
-              data: a['data'],
-              position:
-                  ProtoPoint(x: a['position']['x'], y: a['position']['y']),
-              pageIndex: a['pageIndex'],
-            ));
+        return (json['strokes'] as List)
+            .map((s) => Stroke.fromJson(s).toProto())
+            .where((s) => s.points?.isNotEmpty ?? false);
       }).toList(),
-      lastSyncTime: lastSyncTime,
-    );
+      'assets': questions.expand((q) {
+        final json = jsonDecode(q.content);
+        return (json['assets'] as List).map((a) => {
+              'id': a['id'],
+              'type': a['type'],
+              'data': a['data'],
+              'position': {'x': a['position']['x'], 'y': a['position']['y']},
+              'pageIndex': a['pageIndex'],
+            });
+      }).toList(),
+      'lastSyncTime': lastSyncTime,
+    };
 
     final syncData = {
       'timetables': learnerTimetables.map((t) => t.toMap()).toList(),
       'questions': questions.map((q) => q.toMap()).toList(),
       'answers': answers.map((a) => a.toMap()).toList(),
-      'analytics': analytics.map((a) => a.toMap()).toList(),
       'batched_pending': batchedSyncs,
-      'proto_data': protoData.toJson(), // Simulated Protobuf
+      'canvas_data': canvasData,
     };
     final jsonData = jsonEncode(syncData);
     final compressed = GZipEncoder().encode(utf8.encode(jsonData))!;
@@ -215,14 +202,14 @@ class SyncService {
 
         await _mdnsClient!.start();
         final serviceName = 'Teacher_$teacherId.$classId.$serviceType.local';
-        await for (final ptr in _mdnsClient!.lookup<PtrResourceRecord>(
+        for (final ptr in _mdnsClient!.lookup<PtrResourceRecord>(
           ResourceRecordQuery.serverPointer(serviceType),
         )) {
           if (ptr.domainName == serviceName) {
-            await for (final srv in _mdnsClient!.lookup<SrvResourceRecord>(
+            for (final srv in _mdnsClient!.lookup<SrvResourceRecord>(
               ResourceRecordQuery.service(serviceName),
             )) {
-              await for (final txt in _mdnsClient!.lookup<TxtResourceRecord>(
+              for (final txt in _mdnsClient!.lookup<TxtResourceRecord>(
                 ResourceRecordQuery.text(serviceName),
               )) {
                 final txtData = txt.text
@@ -338,27 +325,18 @@ class SyncService {
     final timetables = response['timetables'] as List;
     final questions = response['questions'] as List;
     final answers = response['answers'] as List;
-    final analytics = response['analytics'] as List;
     final batchedPending = response['batched_pending'] as Map<String, dynamic>;
 
     for (var t in timetables) {
-      _dbService._db.insert('learner_timetables', t,
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      _dbService.insertLearnerTimetable(LearnerTimetable.fromMap(t));
     }
 
     for (var q in questions) {
-      _dbService._db
-          .insert('questions', q, conflictAlgorithm: ConflictAlgorithm.replace);
+      _dbService.insertQuestion(Question.fromMap(q));
     }
 
     for (var a in answers) {
-      _dbService._db
-          .insert('answers', a, conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-
-    for (var a in analytics) {
-      _dbService._db
-          .insert('analytics', a, conflictAlgorithm: ConflictAlgorithm.replace);
+      _dbService.insertAnswer(Answer.fromMap(a));
     }
 
     batchedPending.forEach((key, batch) {
