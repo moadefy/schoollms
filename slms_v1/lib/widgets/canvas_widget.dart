@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
-import 'dart:typed_data'; // Added for Float64List
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf_render/pdf_render.dart';
 import 'package:schoollms/services/database_service.dart';
 import 'package:provider/provider.dart';
-import 'package:vector_math/vector_math.dart'
-    as vector; // Added prefix for vector_math
+import 'package:vector_math/vector_math.dart' as vector;
+import 'package:schoollms/models/asset.dart';
+import 'package:schoollms/models/analytics.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:uuid/uuid.dart';
 
 // Placeholder for Protobuf-generated classes (generate from stroke.proto)
 class ProtoPoint {
@@ -101,7 +106,7 @@ class Stroke {
         [];
     return Stroke(
       points,
-      Color(json['color'] as int? ?? 0xFF000000), // Replaced .value
+      Color(json['color'] as int? ?? 0xFF000000),
       json['strokeWidth'] as double? ?? 1.0,
     );
   }
@@ -118,14 +123,23 @@ class Stroke {
 @immutable
 class CanvasWidget extends StatefulWidget {
   final String learnerId;
+  final String strokes; // JSON-encoded initial strokes
+  final bool readOnly; // New parameter for read-only mode
   final VoidCallback onSave;
   final Function(Map<String, dynamic>) onUpdate;
+  final List<CanvasAsset>? initialAssets; // New parameter for initial assets
+  final Function(List<CanvasAsset>)?
+      onAssetsUpdate; // New callback for asset updates
 
   const CanvasWidget({
     Key? key,
     required this.learnerId,
+    required this.strokes,
+    this.readOnly = false,
     required this.onSave,
     required this.onUpdate,
+    this.initialAssets,
+    this.onAssetsUpdate,
   }) : super(key: key);
 
   @override
@@ -133,47 +147,71 @@ class CanvasWidget extends StatefulWidget {
 }
 
 class _CanvasWidgetState extends State<CanvasWidget> {
-  final List<Stroke> _strokes = [];
-  final List<CanvasAsset> _assets = [];
+  late List<Stroke> _strokes;
+  late List<CanvasAsset> _assets;
   Stroke? _currentStroke;
-  vector.Matrix4 _transform = vector.Matrix4.identity(); // Prefixed Matrix4
+  vector.Matrix4 _transform = vector.Matrix4.identity();
   double _scale = 1.0;
   Offset _panOffset = Offset.zero;
   PdfDocument? _currentPdf;
   ui.Image? _currentImage;
   int _currentPageIndex = 0;
-  String _status = 'active'; // Learner status
-  String? _attendance; // Attendance status
-  int? _attendanceDate; // Attendance timestamp
+  String _status = 'active';
+  String? _attendance;
+  int? _attendanceDate;
+  DateTime? _sessionStartTime;
+  String? _deviceId;
 
   @override
   void initState() {
     super.initState();
+    _strokes = _parseStrokes(widget.strokes);
+    _assets = widget.initialAssets ?? [];
+    _sessionStartTime = DateTime.now();
+    _initializeDeviceId();
     _loadCanvasData();
     _loadLearnerTimetableData();
   }
 
+  Future<void> _initializeDeviceId() async {
+    final deviceInfo = DeviceInfoPlugin();
+    if (Theme.of(context).platform == TargetPlatform.android) {
+      final androidInfo = await deviceInfo.androidInfo;
+      setState(() {
+        _deviceId = androidInfo.id;
+      });
+    } else if (Theme.of(context).platform == TargetPlatform.iOS) {
+      final iosInfo = await deviceInfo.iosInfo;
+      setState(() {
+        _deviceId = iosInfo.identifierForVendor;
+      });
+    } else {
+      setState(() {
+        _deviceId = 'unknown_device_${widget.learnerId}';
+      });
+    }
+  }
+
+  List<Stroke> _parseStrokes(String strokesJson) {
+    try {
+      final List<dynamic> strokeData = jsonDecode(strokesJson);
+      return strokeData.map((data) => Stroke.fromJson(data)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
   Future<void> _loadCanvasData() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
-    final strokesData = await dbService.fetchStrokes(widget.learnerId);
-    final assetsData = await dbService.getAssets(widget.learnerId);
-
+    final assets = await dbService.getAssetsByLearner(widget.learnerId);
     setState(() {
-      _strokes.addAll(strokesData.map((data) => Stroke(
-            (data['points'] as List)
-                .map((p) => Offset(p['x'] as double, p['y'] as double))
-                .toList(),
-            Color((data['color'] as int?) ?? 0xFF000000), // Replaced .value
-            data['strokeWidth'] as double,
-          )));
-      _assets.addAll(assetsData.map((data) => CanvasAsset(
-            id: data['id'] as String,
-            type: data['type'] as String,
-            path: data['path'] as String,
-            pageIndex: data['pageIndex'] as int,
-            position: Offset(
-                data['positionX'] as double, data['positionY'] as double),
-            scale: data['scale'] as double,
+      _assets.addAll(assets.map((asset) => CanvasAsset(
+            id: asset.id,
+            type: asset.type,
+            path: asset.data,
+            pageIndex: 0,
+            position: Offset(asset.positionX, asset.positionY),
+            scale: asset.scale,
           )));
     });
   }
@@ -188,7 +226,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
         orElse: () => timetables.first,
       );
       setState(() {
-        _status = timetable.status;
+        _status = timetable.status ?? 'active';
         _attendance = timetable.attendance;
         _attendanceDate = timetable.attendanceDate;
       });
@@ -196,19 +234,20 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   void _startStroke(Offset position) {
+    if (widget.readOnly) return;
     final localPosition = _transformPoint(position);
     setState(() {
       _currentStroke = Stroke(
         [localPosition],
-        Colors.black, // Use theme color if needed
+        Colors.black,
         2.0,
       );
-      _strokes.add(_currentStroke!);
+      if (_currentStroke != null) _strokes.add(_currentStroke!);
     });
   }
 
   void _updateStroke(Offset position) {
-    if (_currentStroke == null) return;
+    if (widget.readOnly || _currentStroke == null) return;
     final localPosition = _transformPoint(position);
     setState(() {
       _currentStroke!.points.add(localPosition);
@@ -216,7 +255,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   void _endStroke() {
-    if (_currentStroke == null) return;
+    if (widget.readOnly || _currentStroke == null) return;
     setState(() {
       _currentStroke = null;
     });
@@ -224,15 +263,15 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   void _undo() {
-    if (_strokes.isNotEmpty) {
-      setState(() {
-        _strokes.removeLast();
-      });
-      _saveStrokes();
-    }
+    if (widget.readOnly || _strokes.isEmpty) return;
+    setState(() {
+      _strokes.removeLast();
+    });
+    _saveStrokes();
   }
 
   void _clear() {
+    if (widget.readOnly) return;
     setState(() {
       _strokes.clear();
       _assets.clear();
@@ -245,6 +284,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   Future<void> _pickImage() async {
+    if (widget.readOnly) return;
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
@@ -254,37 +294,48 @@ class _CanvasWidgetState extends State<CanvasWidget> {
         _currentImage = image;
         _currentPdf = null;
         _currentPageIndex = 0;
-        _assets.add(CanvasAsset(
-          id: DateTime.now().toString(),
+        final newAsset = CanvasAsset(
+          id: Uuid().v4(),
           type: 'image',
           path: pickedFile.path,
           pageIndex: 0,
           position: Offset.zero,
           scale: 1.0,
-        ));
+        );
+        _assets.add(newAsset);
+        if (widget.onAssetsUpdate != null) {
+          widget.onAssetsUpdate!([newAsset]);
+        }
       });
       _saveAssets();
     }
   }
 
   Future<void> _pickPdf() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(
-        source: ImageSource.gallery); // Adjust for file picker if needed
-    if (pickedFile != null) {
-      final pdfDoc = await PdfDocument.openFile(pickedFile.path);
+    if (widget.readOnly) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (result != null && result.files.isNotEmpty) {
+      final pickedFile = result.files.first;
+      final pdfDoc = await PdfDocument.openFile(pickedFile.path!);
       setState(() {
         _currentPdf = pdfDoc;
         _currentImage = null;
         _currentPageIndex = 0;
-        _assets.add(CanvasAsset(
-          id: DateTime.now().toString(),
+        final newAsset = CanvasAsset(
+          id: Uuid().v4(),
           type: 'pdf',
-          path: pickedFile.path,
+          path: pickedFile.path!,
           pageIndex: 0,
           position: Offset.zero,
           scale: 1.0,
-        ));
+        );
+        _assets.add(newAsset);
+        if (widget.onAssetsUpdate != null) {
+          widget.onAssetsUpdate!([newAsset]);
+        }
       });
       _saveAssets();
     }
@@ -298,24 +349,20 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     setState(() {
       _currentImage = image;
       _currentPageIndex = pageIndex;
+      _updateAssetPage(pageIndex);
     });
   }
 
   void _nextPage() {
-    if (_currentPdf == null || _currentPageIndex >= _currentPdf!.pageCount - 1)
-      return;
-    {
-      _renderPdfPage(_currentPageIndex + 1);
-      _updateAssetPage(_currentPageIndex + 1);
-    }
+    if (widget.readOnly ||
+        _currentPdf == null ||
+        _currentPageIndex >= _currentPdf!.pageCount - 1) return;
+    _renderPdfPage(_currentPageIndex + 1);
   }
 
   void _previousPage() {
-    if (_currentPageIndex <= 0) return;
-    {
-      _renderPdfPage(_currentPageIndex - 1);
-      _updateAssetPage(_currentPageIndex - 1);
-    }
+    if (widget.readOnly || _currentPageIndex <= 0) return;
+    _renderPdfPage(_currentPageIndex - 1);
   }
 
   void _updateAssetPage(int pageIndex) {
@@ -323,8 +370,11 @@ class _CanvasWidgetState extends State<CanvasWidget> {
       final assetIndex = _assets
           .indexWhere((a) => a.type == 'pdf' && a.path == _assets.last.path);
       if (assetIndex != -1) {
-        _assets[assetIndex] =
-            _assets[assetIndex].copyWith(pageIndex: pageIndex);
+        final updatedAsset = _assets[assetIndex].copyWith(pageIndex: pageIndex);
+        _assets[assetIndex] = updatedAsset;
+        if (widget.onAssetsUpdate != null) {
+          widget.onAssetsUpdate!([updatedAsset]);
+        }
       }
     });
     _saveAssets();
@@ -336,6 +386,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     await _saveLearnerTimetableData();
     widget.onSave();
     widget.onUpdate({'strokes': _strokes.map((s) => s.toJson()).toList()});
+    _logAnalytics('stroke_update');
   }
 
   Future<void> _saveAssets() async {
@@ -343,6 +394,10 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     await dbService.saveAssets(widget.learnerId, _assets);
     await _saveLearnerTimetableData();
     widget.onSave();
+    if (widget.onAssetsUpdate != null) {
+      widget.onAssetsUpdate!(_assets);
+    }
+    _logAnalytics('asset_update');
   }
 
   Future<void> _saveLearnerTimetableData() async {
@@ -354,8 +409,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
             t.timeSlot.contains(DateTime.now().toIso8601String().split('T')[0]),
         orElse: () => timetables.first,
       );
-      // Use timetable.id as int
-      final int timetableId = timetable.id;
+      final String timetableId = timetable.id; // Changed to String
       await dbService.updateLearnerTimetableStatus(
           widget.learnerId, timetableId, _status);
       if (_attendance != null && _attendanceDate != null) {
@@ -366,6 +420,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   void _setStatus(String status) {
+    if (widget.readOnly) return;
     setState(() {
       _status = status;
     });
@@ -373,6 +428,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   void _setAttendance(String attendance) {
+    if (widget.readOnly) return;
     setState(() {
       _attendance = attendance;
       _attendanceDate = DateTime.now().millisecondsSinceEpoch;
@@ -381,8 +437,8 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   }
 
   Offset _transformPoint(Offset position) {
-    final vector.Vector3 pointVector = vector.Vector3(
-        position.dx, position.dy, 0); // Renamed to avoid shadowing
+    final vector.Vector3 pointVector =
+        vector.Vector3(position.dx, position.dy, 0);
     final matrix = _transform.clone()..invert();
     final transformedVector = matrix.transform3(pointVector);
     return Offset(transformedVector.x, transformedVector.y);
@@ -397,7 +453,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   void _onScaleUpdate(ScaleUpdateDetails details) {
     setState(() {
       _scale *= details.scale;
-      _transform = vector.Matrix4.identity() // Prefixed Matrix4
+      _transform = vector.Matrix4.identity()
         ..scale(_scale)
         ..translate(details.focalPoint.dx - _panOffset.dx,
             details.focalPoint.dy - _panOffset.dy);
@@ -405,14 +461,35 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     });
   }
 
+  Future<void> _logAnalytics(String action) async {
+    if (_sessionStartTime == null || _deviceId == null) return;
+    final dbService = Provider.of<DatabaseService>(context, listen: false);
+    final endTime = DateTime.now();
+    final timeSpent = endTime.difference(_sessionStartTime!).inSeconds;
+    final analytics = Analytics(
+      questionId: '', // To be set by parent if applicable
+      learnerId: widget.learnerId,
+      timeSpentSeconds: timeSpent,
+      submissionStatus: action == 'stroke_update' ? 'draft' : 'asset_updated',
+      deviceId: _deviceId!,
+      timestamp: endTime.millisecondsSinceEpoch,
+    );
+    await dbService.insertAnalytics(analytics);
+    _sessionStartTime = endTime; // Reset for next session
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         GestureDetector(
-          onPanStart: (details) => _startStroke(details.localPosition),
-          onPanUpdate: (details) => _updateStroke(details.localPosition),
-          onPanEnd: (details) => _endStroke(),
+          onPanStart: widget.readOnly
+              ? null
+              : (details) => _startStroke(details.localPosition),
+          onPanUpdate: widget.readOnly
+              ? null
+              : (details) => _updateStroke(details.localPosition),
+          onPanEnd: widget.readOnly ? null : (details) => _endStroke(),
           onScaleStart: _onScaleStart,
           onScaleUpdate: _onScaleUpdate,
           child: CustomPaint(
@@ -432,28 +509,28 @@ class _CanvasWidgetState extends State<CanvasWidget> {
             children: [
               IconButton(
                 icon: const Icon(Icons.undo),
-                onPressed: _undo,
+                onPressed: widget.readOnly ? null : _undo,
               ),
               IconButton(
                 icon: const Icon(Icons.clear),
-                onPressed: _clear,
+                onPressed: widget.readOnly ? null : _clear,
               ),
               IconButton(
                 icon: const Icon(Icons.image),
-                onPressed: _pickImage,
+                onPressed: widget.readOnly ? null : _pickImage,
               ),
               IconButton(
                 icon: const Icon(Icons.picture_as_pdf),
-                onPressed: _pickPdf,
+                onPressed: widget.readOnly ? null : _pickPdf,
               ),
               if (_currentPdf != null) ...[
                 IconButton(
                   icon: const Icon(Icons.arrow_back),
-                  onPressed: _previousPage,
+                  onPressed: widget.readOnly ? null : _previousPage,
                 ),
                 IconButton(
                   icon: const Icon(Icons.arrow_forward),
-                  onPressed: _nextPage,
+                  onPressed: widget.readOnly ? null : _nextPage,
                 ),
               ],
               const SizedBox(height: 10),
@@ -464,7 +541,8 @@ class _CanvasWidgetState extends State<CanvasWidget> {
                   DropdownMenuItem(value: 'absent', child: Text('Absent')),
                   DropdownMenuItem(value: 'pending', child: Text('Pending')),
                 ],
-                onChanged: (value) => _setStatus(value!),
+                onChanged:
+                    widget.readOnly ? null : (value) => _setStatus(value!),
               ),
               const SizedBox(height: 10),
               Row(
@@ -472,17 +550,21 @@ class _CanvasWidgetState extends State<CanvasWidget> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.check_circle),
-                    onPressed: () => _setAttendance('present'),
+                    onPressed: widget.readOnly
+                        ? null
+                        : () => _setAttendance('present'),
                     color: _attendance == 'present' ? Colors.green : null,
                   ),
                   IconButton(
                     icon: const Icon(Icons.cancel),
-                    onPressed: () => _setAttendance('absent'),
+                    onPressed:
+                        widget.readOnly ? null : () => _setAttendance('absent'),
                     color: _attendance == 'absent' ? Colors.red : null,
                   ),
                   IconButton(
                     icon: const Icon(Icons.access_time),
-                    onPressed: () => _setAttendance('late'),
+                    onPressed:
+                        widget.readOnly ? null : () => _setAttendance('late'),
                     color: _attendance == 'late' ? Colors.orange : null,
                   ),
                 ],
@@ -490,7 +572,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
               if (_attendance != null && _attendanceDate != null)
                 Text(
                   'Attendance: $_attendance at ${DateTime.fromMillisecondsSinceEpoch(_attendanceDate!).toLocal()}',
-                  style: const TextStyle(fontSize: 12), // Added const
+                  style: const TextStyle(fontSize: 12),
                 ),
             ],
           ),
@@ -503,7 +585,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 class CanvasPainter extends CustomPainter {
   final List<Stroke> strokes;
   final List<CanvasAsset> assets;
-  final vector.Matrix4 transform; // Prefixed Matrix4
+  final vector.Matrix4 transform;
   final ui.Image? currentImage;
 
   CanvasPainter({
@@ -516,25 +598,38 @@ class CanvasPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-    // Convert Float32List to Float64List for compatibility
     final Float64List transformMatrix = Float64List.fromList(transform.storage);
     canvas.transform(transformMatrix);
 
     // Draw assets (images/PDFs)
     for (final asset in assets) {
       if (asset.type == 'image' && currentImage != null) {
-        final paint = Paint();
-        canvas.drawImage(
+        final rect = Rect.fromLTWH(
+          asset.position.dx,
+          asset.position.dy,
+          currentImage!.width * asset.scale,
+          currentImage!.height * asset.scale,
+        );
+        canvas.drawImageRect(
           currentImage!,
-          asset.position,
-          paint,
+          Rect.fromLTWH(0, 0, currentImage!.width.toDouble(),
+              currentImage!.height.toDouble()),
+          rect,
+          Paint(),
         );
       } else if (asset.type == 'pdf' && currentImage != null) {
-        final paint = Paint();
-        canvas.drawImage(
+        final rect = Rect.fromLTWH(
+          asset.position.dx,
+          asset.position.dy,
+          currentImage!.width * asset.scale,
+          currentImage!.height * asset.scale,
+        );
+        canvas.drawImageRect(
           currentImage!,
-          asset.position,
-          paint,
+          Rect.fromLTWH(0, 0, currentImage!.width.toDouble(),
+              currentImage!.height.toDouble()),
+          rect,
+          Paint(),
         );
       }
     }

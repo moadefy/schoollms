@@ -1,7 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="online.schoollms.mobile">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Permissions for WiFi hotspot and P2P networking (wifi_iot) -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -15,10 +13,7 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- Permissions for image/PDF picking (image_picker) -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-                     android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-                     android:maxSdkVersion="32" />
+    <!-- Removed READ/WRITE_EXTERNAL_STORAGE for Android 13+ (API 33+), using READ_MEDIA_* instead -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 
@@ -53,7 +48,7 @@
             android:windowSoftInputMode="adjustResize">
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
-                android:resourceName="NormalTheme" />
+                android:resource="@style/NormalTheme" /> <!-- Fixed from resourceName to resource -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -68,7 +63,7 @@
         <!-- File provider for image_picker -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="online.schoollms.mobile.fileprovider"
+            android:authorities="com.example.slms_v1.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

@@ -8,6 +8,8 @@ class Answer {
   final List<Map<String, dynamic>> strokes; // Canvas strokes
   final List<Map<String, dynamic>> assets; // Canvas assets (images/PDFs)
   final int? submitted_at; // Nullable submission timestamp
+  double? score; // Optional score, default to null
+  String? remarks; // Optional remarks, default to null
 
   Answer({
     required this.id,
@@ -16,6 +18,8 @@ class Answer {
     required this.strokes,
     required this.assets,
     this.submitted_at,
+    this.score = 0.0, // Default to 0.0 if not provided
+    this.remarks = '', // Default to empty string if not provided
   });
 
   // Factory constructor to create Answer from a map (e.g., database result)
@@ -29,6 +33,8 @@ class Answer {
       assets: (jsonDecode(map['assets'] as String) as List)
           .cast<Map<String, dynamic>>(),
       submitted_at: map['submitted_at'] as int?,
+      score: (map['score'] != null) ? map['score'] as double : 0.0,
+      remarks: map['remarks'] as String? ?? '',
     );
   }
 
@@ -41,6 +47,8 @@ class Answer {
       'strokes': jsonEncode(strokes),
       'assets': jsonEncode(assets),
       'submitted_at': submitted_at,
+      'score': score,
+      'remarks': remarks,
     };
   }
 
@@ -54,7 +62,9 @@ class Answer {
           learnerId TEXT NOT NULL,
           strokes TEXT NOT NULL,
           assets TEXT NOT NULL,
-          submitted_at INTEGER
+          submitted_at INTEGER,
+          score REAL, -- Using REAL for double/float values
+          remarks TEXT
         )
       ''');
     } catch (e) {

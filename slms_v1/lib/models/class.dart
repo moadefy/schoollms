@@ -1,4 +1,4 @@
-import 'package:sqflite/sqflite.dart'; // Added import for Database
+import 'package:sqflite/sqflite.dart'; // Import for Database
 
 class Class {
   final String id;
@@ -41,7 +41,8 @@ class Class {
           id TEXT PRIMARY KEY,
           teacherId TEXT NOT NULL,
           subject TEXT NOT NULL,
-          grade TEXT NOT NULL
+          grade TEXT NOT NULL,
+          FOREIGN KEY (teacherId) REFERENCES teachers(id) ON DELETE CASCADE
         )
       ''');
     } catch (e) {

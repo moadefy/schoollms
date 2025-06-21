@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:school_app/services/database_service.dart';
-import 'package:school_app/providers/sync_state.dart';
-import 'models.dart';
+import 'package:schoollms/services/database_service.dart';
+import 'package:schoollms/providers/sync_state.dart';
+import 'package:schoollms/models/learnertimetable.dart'; // Ensure this model is defined
 
 class LearnerTimetableScreen extends StatelessWidget {
   final String learnerId;
 
-  LearnerTimetableScreen({this.learnerId});
+  LearnerTimetableScreen({required this.learnerId});
 
   @override
   Widget build(BuildContext context) {
@@ -37,29 +37,48 @@ class LearnerTimetableScreen extends StatelessWidget {
           ),
           Expanded(
             child: FutureBuilder<List<LearnerTimetable>>(
-              future: Provider.of<DatabaseService>(context)
+              future: Provider.of<DatabaseService>(context, listen: false)
                   .getLearnerTimetable(learnerId),
               builder: (context, snapshot) {
-                if (!snapshot.hasData)
+                if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text('Error: ${snapshot.error}'));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return Center(child: Text('No timetable data available'));
+                }
                 return ListView.builder(
-                  itemCount: snapshot.data.length,
+                  itemCount: snapshot.data!.length,
                   itemBuilder: (context, index) {
-                    final timetable = snapshot.data[index];
-                    return ListTile(
-                      title: Text(timetable.timeSlot),
-                      subtitle: FutureBuilder<Map<String, dynamic>>(
-                        future: Provider.of<DatabaseService>(context)
-                            ._db
-                            .query('classes', where: 'id = ?', whereArgs: [
-                          timetable.classId
-                        ]).then((maps) => maps.isNotEmpty ? maps[0] : {}),
-                        builder: (context, classSnapshot) {
-                          if (!classSnapshot.hasData) return Text('Loading...');
-                          return Text(
-                              '${classSnapshot.data['subject']} (Grade ${classSnapshot.data['grade']})');
-                        },
-                      ),
+                    final timetable = snapshot.data![index];
+                    return FutureBuilder<Map<String, dynamic>?>(
+                      future:
+                          Provider.of<DatabaseService>(context, listen: false)
+                              .getClassById(timetable.classId),
+                      builder: (context, classSnapshot) {
+                        if (classSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return ListTile(
+                            title: Text(timetable.timeSlot),
+                            subtitle: Text('Loading class details...'),
+                          );
+                        }
+                        if (classSnapshot.hasError) {
+                          return ListTile(
+                            title: Text(timetable.timeSlot),
+                            subtitle: Text(
+                                'Error loading class: ${classSnapshot.error}'),
+                          );
+                        }
+                        final classData = classSnapshot.data ?? {};
+                        return ListTile(
+                          title: Text(timetable.timeSlot),
+                          subtitle: Text(
+                              '${classData['subject'] ?? 'Unknown'} (Grade ${classData['grade'] ?? 'Unknown'})'),
+                        );
+                      },
                     );
                   },
                 );

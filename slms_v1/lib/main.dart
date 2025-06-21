@@ -52,12 +52,12 @@ class MyApp extends StatelessWidget {
       title: 'schoollms',
       theme: ThemeData(
         primaryColor: const Color(
-            0xFF1E3A8A), // Replace with primary color from schoollms.png
+            0xFFD4A017), // Replace with primary color from schoollms.png
         scaffoldBackgroundColor:
             const Color(0xFFF1F5F9), // Replace with background color
         colorScheme: const ColorScheme.light(
           secondary:
-              Color(0xFFFBBF24), // Replace with accent color from schoollms.png
+              Color(0xFF1E7C8D), // Replace with accent color from schoollms.png
         ),
         textTheme: const TextTheme(
           bodyMedium:
@@ -71,7 +71,7 @@ class MyApp extends StatelessWidget {
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor:
-                const Color(0xFF1E3A8A), // Replace with primary color
+                const Color(0xFFD4A017), // Replace with primary color
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8.0),
@@ -79,7 +79,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
         iconTheme: const IconThemeData(
-          color: Color(0xFFFBBF24), // Replace with accent color
+          color: Color(0xFF1E7C8D), // Replace with accent color
         ),
       ),
       initialRoute: '/',

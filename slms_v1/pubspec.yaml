@@ -2,12 +2,14 @@ name: schoollms
 description: School learner and learning management system that integrates all learning through an interactive and intelligent timetable with peer-to-peer offline synchronisation
 version: 1.0.0
 environment:
-  sdk: ">=2.12.0 <3.0.0"
+  sdk: ">=2.17.0 <3.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
   sqflite: ^2.3.3+1 # Null-safe, latest
+  file_picker: ^5.2.5
+  device_info_plus: ^9.0.0
   vector_math: ^2.1.4
   table_calendar: ^3.0.9 # Null-safe, latest
   provider: ^6.1.2 # Null-safe, latest

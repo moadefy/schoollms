@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 class LearnerTimetable {
-  final int id; // Changed from String to int
+  final String id; // Changed from int to String for UUID
   final String learnerId;
   final String classId;
   final String timeSlot;
@@ -21,7 +21,7 @@ class LearnerTimetable {
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      'id': id, // Store as string
       'learnerId': learnerId,
       'classId': classId,
       'timeSlot': timeSlot,
@@ -34,7 +34,7 @@ class LearnerTimetable {
   static Future<void> createTable(Database db) async {
     await db.execute('''
       CREATE TABLE learner_timetables (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT PRIMARY KEY, -- Changed to TEXT PRIMARY KEY for UUID
         learnerId TEXT NOT NULL,
         classId TEXT NOT NULL,
         timeSlot TEXT NOT NULL,
@@ -55,7 +55,7 @@ class LearnerTimetable {
 
   factory LearnerTimetable.fromMap(Map<String, dynamic> map) {
     return LearnerTimetable(
-      id: map['id'] as int,
+      id: map['id'] as String, // Cast id as String
       learnerId: map['learnerId'] as String,
       classId: map['classId'] as String,
       timeSlot: map['timeSlot'] as String,

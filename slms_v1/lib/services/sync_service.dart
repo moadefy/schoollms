@@ -12,6 +12,7 @@ import 'package:schoollms/widgets/canvas_widget.dart'; // Import for Stroke
 import 'package:schoollms/models/learnertimetable.dart'; // Import for LearnerTimetable
 import 'package:schoollms/models/question.dart'; // Import for Question
 import 'package:schoollms/models/answer.dart'; // Import for Answer
+import 'package:schoollms/models/assessment.dart'; // Added for Assessment
 
 class SyncService {
   ServerSocket? _server;
@@ -127,8 +128,11 @@ class SyncService {
         sinceTimestamp: lastSyncTime);
     final timetable =
         learnerTimetables.isNotEmpty ? learnerTimetables.first : null;
-    final questions = timetable != null
-        ? await _dbService.getQuestionsByTimetable(timetable.id)
+    final classId = timetable?.classId ?? '';
+    final questions =
+        classId.isNotEmpty ? await _dbService.getQuestionsByClass(classId) : [];
+    final assessments = classId.isNotEmpty
+        ? await _dbService.getAssessmentsByClass(classId)
         : [];
 
     final batchedSyncs = <String, List<Map<String, dynamic>>>{};
@@ -162,6 +166,8 @@ class SyncService {
     final syncData = {
       'timetables': learnerTimetables.map((t) => t.toMap()).toList(),
       'questions': questions.map((q) => q.toMap()).toList(),
+      'assessments':
+          assessments.map((a) => a.toMap()).toList(), // Added assessments
       'batched_pending': batchedSyncs,
       'canvas_data': canvasData,
     };
@@ -326,6 +332,7 @@ class SyncService {
   void _processSyncResponse(Map<String, dynamic> response) {
     final timetables = response['timetables'] as List;
     final questions = response['questions'] as List;
+    final assessments = response['assessments'] as List; // Added assessments
     final answers = response['answers'] as List;
     final batchedPending = response['batched_pending'] as Map<String, dynamic>;
 
@@ -335,6 +342,11 @@ class SyncService {
 
     for (var q in questions) {
       _dbService.insertQuestion(Question.fromMap(q));
+    }
+
+    for (var a in assessments) {
+      // Process assessments
+      _dbService.insertAssessment(Assessment.fromMap(a));
     }
 
     for (var a in answers) {
