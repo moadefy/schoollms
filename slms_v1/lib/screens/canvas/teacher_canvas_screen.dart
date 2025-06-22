@@ -4,6 +4,8 @@ import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import 'package:schoollms/services/database_service.dart';
 import 'package:schoollms/models/timetable.dart';
+import 'package:schoollms/models/class.dart';
+import 'package:schoollms/models/timetable_slot.dart';
 import 'package:schoollms/models/question.dart';
 import 'package:schoollms/models/assessment.dart';
 import 'package:schoollms/models/answer.dart';
@@ -14,8 +16,15 @@ import 'package:device_info_plus/device_info_plus.dart';
 
 class TeacherCanvasScreen extends StatefulWidget {
   final String teacherId;
+  final String? timetableId; // Optional parameter for context
+  final String? userRole; // Optional parameter for context
 
-  const TeacherCanvasScreen({super.key, required this.teacherId});
+  const TeacherCanvasScreen({
+    super.key,
+    required this.teacherId,
+    this.timetableId,
+    this.userRole,
+  });
 
   @override
   _TeacherCanvasScreenState createState() => _TeacherCanvasScreenState();
@@ -24,11 +33,16 @@ class TeacherCanvasScreen extends StatefulWidget {
 class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   List<Timetable> _timetables = [];
   Timetable? _selectedTimetable;
+  Class? _class;
   List<Question> _questions = [];
   List<Assessment> _assessments = [];
   String _filter = '';
   Assessment? _selectedAssessment;
   String? _deviceId;
+  String? _effectiveTimetableId; // To store the resolved timetableId
+  String? _effectiveSlotId; // To store the resolved slotId
+  Map<String, List<TimetableSlot>> _timetableSlots =
+      {}; // Store slots per timetable
 
   @override
   void didChangeDependencies() {
@@ -79,12 +93,21 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
     final allTimetables = await db.getTimetables('');
     final teacherTimetables =
         allTimetables.where((t) => t.teacherId == widget.teacherId).toList();
+    final slotFutures =
+        teacherTimetables.map((t) => db.getTimetableSlotsByTimetableId(t.id));
+    final slotLists = await Future.wait(slotFutures);
+    final slotMap = Map.fromIterables(
+      teacherTimetables.map((t) => t.id),
+      slotLists,
+    );
     if (mounted) {
       setState(() {
         _timetables = teacherTimetables;
         _selectedTimetable =
             teacherTimetables.isNotEmpty ? teacherTimetables[0] : null;
+        _timetableSlots = slotMap;
         if (_selectedTimetable != null) {
+          _resolveTimetableAndSlotId();
           _loadQuestions();
           _loadAssessments();
         }
@@ -92,10 +115,43 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
     }
   }
 
-  Future<void> _loadQuestions() async {
-    if (_selectedTimetable == null) return;
+  Future<void> _resolveTimetableAndSlotId() async {
     final db = Provider.of<DatabaseService>(context, listen: false);
-    final questions = await db.getQuestionsByClass(_selectedTimetable!.classId);
+    if (widget.timetableId != null) {
+      setState(() {
+        _effectiveTimetableId = widget.timetableId;
+      });
+      final slots =
+          await db.getTimetableSlotsByTimetableId(widget.timetableId!);
+      if (slots.isNotEmpty) {
+        setState(() {
+          _effectiveSlotId = slots.first.id;
+        });
+      }
+      return;
+    }
+    if (_selectedTimetable != null) {
+      setState(() {
+        _effectiveTimetableId = _selectedTimetable!.id;
+      });
+      final slots = _timetableSlots[_selectedTimetable!.id] ??
+          await db.getTimetableSlotsByTimetableId(_selectedTimetable!.id);
+      if (slots.isNotEmpty) {
+        setState(() {
+          _effectiveSlotId = slots.first.id;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadQuestions() async {
+    if (_selectedTimetable == null || _effectiveSlotId == null) return;
+    final db = Provider.of<DatabaseService>(context, listen: false);
+    final slots = _timetableSlots[_selectedTimetable!.id] ??
+        await db.getTimetableSlotsByTimetableId(_selectedTimetable!.id);
+    if (slots.isEmpty) return;
+    final classId = slots.first.classId;
+    final questions = await db.getQuestionsByClass(classId);
     if (mounted) {
       setState(() {
         _questions = questions;
@@ -104,10 +160,13 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   }
 
   Future<void> _loadAssessments() async {
-    if (_selectedTimetable == null) return;
+    if (_selectedTimetable == null || _effectiveSlotId == null) return;
     final db = Provider.of<DatabaseService>(context, listen: false);
-    final assessments =
-        await db.getAssessmentsByClass(_selectedTimetable!.classId);
+    final slots = _timetableSlots[_selectedTimetable!.id] ??
+        await db.getTimetableSlotsByTimetableId(_selectedTimetable!.id);
+    if (slots.isEmpty) return;
+    final classId = slots.first.classId;
+    final assessments = await db.getAssessmentsByClass(classId);
     if (mounted) {
       setState(() {
         _assessments = assessments;
@@ -120,12 +179,16 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
     String canvasData = jsonEncode([]);
     final questionId = Uuid().v4();
     int? pdfPage = null;
-    String? selectedClassId = _selectedTimetable?.classId;
+    final slots = await db.getTimetableSlotsByTimetableId(
+        _effectiveTimetableId ?? _selectedTimetable!.id);
+    String? selectedClassId = slots.isNotEmpty ? slots.first.classId : null;
     String? assessmentId = await _selectAssessment(context);
     DateTime startTime = DateTime.now();
 
-    if (assessmentId == null || selectedClassId == null || _deviceId == null)
-      return;
+    if (assessmentId == null ||
+        selectedClassId == null ||
+        _deviceId == null ||
+        _effectiveSlotId == null) return;
 
     int? timerSeconds = (await _getAssessmentType(assessmentId) == 'test' ||
             await _getAssessmentType(assessmentId) == 'exam')
@@ -137,11 +200,12 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
 
     final question = Question(
       id: questionId,
-      timetableId: _selectedTimetable?.id,
+      timetableId: _effectiveTimetableId,
       classId: selectedClassId,
       assessmentId: assessmentId,
       content: canvasData,
       pdfPage: pdfPage,
+      slotId: _effectiveSlotId, // Add slotId
     );
 
     await Navigator.push(
@@ -213,6 +277,9 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
               }
             },
             initialAssets: [],
+            timetableId: _effectiveTimetableId,
+            slotId: _effectiveSlotId, // Pass the resolved slotId
+            userRole: widget.userRole ?? 'teacher', // Default to 'teacher'
           ),
         ),
       ),
@@ -242,8 +309,16 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
 
   Future<String> _getAssessmentType(String assessmentId) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
-    final assessments =
-        await db.getAssessmentsByClass(_selectedTimetable!.classId);
+    if (_selectedTimetable == null) throw Exception('No timetable selected');
+
+    // Fetch TimetableSlot to get classId
+    final slots =
+        await db.getTimetableSlotsByTimetableId(_selectedTimetable!.id);
+    if (slots.isEmpty)
+      throw Exception('No slots found for timetable ${_selectedTimetable!.id}');
+    final classId = slots.first.classId;
+
+    final assessments = await db.getAssessmentsByClass(classId);
     final assessment = assessments.firstWhere((a) => a.id == assessmentId,
         orElse: () => throw Exception('Assessment not found'));
     return assessment.type;
@@ -299,6 +374,9 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                 .toList(),
             onSave: () {},
             onUpdate: (data) {},
+            timetableId: _effectiveTimetableId,
+            slotId: question.slotId, // Use the question's slotId
+            userRole: widget.userRole ?? 'teacher', // Default to 'teacher'
           ),
         ),
       ),
@@ -308,7 +386,10 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   Future<void> _markAnswers(Question question) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
     final answers = await db.getAnswersByQuestion(question.id);
-    final classId = question.classId;
+    final slots = await db.getTimetableSlotsByTimetableId(
+        _effectiveTimetableId ?? _selectedTimetable!.id);
+    if (slots.isEmpty) return;
+    final classId = slots.first.classId;
     final classData = await db.getClassById(classId);
     if (classData == null) return;
     final grade = classData['grade'] as String;
@@ -343,6 +424,7 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                         score: await _selectScore(context) ?? answer.score,
                         remarks:
                             await _selectRemarks(context) ?? answer.remarks,
+                        slotId: question.slotId, // Use the question's slotId
                       );
                       await db.insertAnswer(updatedAnswer);
                       final analytics = Analytics(
@@ -406,6 +488,9 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                   ));
                 }
               },
+              timetableId: _effectiveTimetableId,
+              slotId: question.slotId, // Use the question's slotId
+              userRole: widget.userRole ?? 'teacher', // Default to 'teacher'
             ),
           ),
         ),
@@ -478,15 +563,34 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
           DropdownButton<Timetable>(
             hint: const Text('Select Timetable'),
             value: _selectedTimetable,
-            items: _timetables
-                .map((t) => DropdownMenuItem(
-                      value: t,
-                      child: Text(t.timeSlot!),
-                    ))
-                .toList(),
+            items: _timetables.map((t) {
+              final slots = _timetableSlots[t.id] ?? [];
+              if (slots.isEmpty) {
+                return DropdownMenuItem<Timetable>(
+                  value: t,
+                  child: Text('No slots'),
+                );
+              }
+              final timeSlot = slots.first.timeSlot?.split(' ').last ?? 'N/A';
+              final classId = slots.first.classId;
+              final classData = Provider.of<List<Class>>(context)
+                  .firstWhere((cls) => cls.id == classId,
+                      orElse: () => Class(
+                            id: '',
+                            teacherId: '',
+                            subject: 'Unknown',
+                            grade: 'Unknown',
+                          ));
+              return DropdownMenuItem<Timetable>(
+                value: t,
+                child: Text(
+                    '$timeSlot - ${classData.subject} (Grade ${classData.grade})'),
+              );
+            }).toList(),
             onChanged: (value) {
               setState(() {
                 _selectedTimetable = value;
+                _resolveTimetableAndSlotId();
                 _loadQuestions();
                 _loadAssessments();
               });

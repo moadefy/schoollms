@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:vector_math/vector_math.dart' as vector;
 import 'package:schoollms/models/asset.dart';
 import 'package:schoollms/models/analytics.dart';
+import 'package:schoollms/models/learnertimetable.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:uuid/uuid.dart';
@@ -124,12 +125,15 @@ class Stroke {
 class CanvasWidget extends StatefulWidget {
   final String learnerId;
   final String strokes; // JSON-encoded initial strokes
-  final bool readOnly; // New parameter for read-only mode
+  final bool readOnly; // Parameter for read-only mode
   final VoidCallback onSave;
   final Function(Map<String, dynamic>) onUpdate;
-  final List<CanvasAsset>? initialAssets; // New parameter for initial assets
+  final List<CanvasAsset>? initialAssets; // Parameter for initial assets
   final Function(List<CanvasAsset>)?
-      onAssetsUpdate; // New callback for asset updates
+      onAssetsUpdate; // Callback for asset updates
+  final String? userRole; // New parameter for user role
+  final String? timetableId; // Added to match all screens
+  final String? slotId; // Added slotId parameter
 
   const CanvasWidget({
     Key? key,
@@ -140,6 +144,9 @@ class CanvasWidget extends StatefulWidget {
     required this.onUpdate,
     this.initialAssets,
     this.onAssetsUpdate,
+    this.userRole, // Added userRole parameter
+    this.timetableId, // Added
+    this.slotId, // Added
   }) : super(key: key);
 
   @override
@@ -218,11 +225,12 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   Future<void> _loadLearnerTimetableData() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
-    final timetables = await dbService.getLearnerTimetable(widget.learnerId);
+    final timetables = await dbService.getLearnerTimetable(widget.learnerId,
+        sinceTimestamp: 0);
     if (timetables.isNotEmpty) {
+      final currentDate = DateTime.now().toIso8601String().split('T')[0];
       final timetable = timetables.firstWhere(
-        (t) =>
-            t.timeSlot.contains(DateTime.now().toIso8601String().split('T')[0]),
+        (t) => t.timeSlot.contains(currentDate),
         orElse: () => timetables.first,
       );
       setState(() {
@@ -391,7 +399,8 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   Future<void> _saveAssets() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
-    await dbService.saveAssets(widget.learnerId, _assets);
+    await dbService.saveAssets(
+        widget.learnerId, _assets); // Pass List<CanvasAsset>
     await _saveLearnerTimetableData();
     widget.onSave();
     if (widget.onAssetsUpdate != null) {
@@ -402,19 +411,19 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   Future<void> _saveLearnerTimetableData() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
-    final timetables = await dbService.getLearnerTimetable(widget.learnerId);
+    final timetables = await dbService.getLearnerTimetable(widget.learnerId,
+        sinceTimestamp: 0);
     if (timetables.isNotEmpty) {
+      final currentDate = DateTime.now().toIso8601String().split('T')[0];
       final timetable = timetables.firstWhere(
-        (t) =>
-            t.timeSlot.contains(DateTime.now().toIso8601String().split('T')[0]),
+        (t) => t.timeSlot.contains(currentDate),
         orElse: () => timetables.first,
       );
-      final String timetableId = timetable.id; // Changed to String
       await dbService.updateLearnerTimetableStatus(
-          widget.learnerId, timetableId, _status);
+          widget.learnerId, timetable.id, _status);
       if (_attendance != null && _attendanceDate != null) {
         await dbService.recordAttendance(
-            widget.learnerId, timetableId, _attendance!, _attendanceDate!);
+            widget.learnerId, timetable.id, _attendance!, _attendanceDate!);
       }
     }
   }
@@ -480,6 +489,8 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   @override
   Widget build(BuildContext context) {
+    bool isAdmin = widget.userRole == 'admin';
+
     return Stack(
       children: [
         GestureDetector(
@@ -573,6 +584,11 @@ class _CanvasWidgetState extends State<CanvasWidget> {
                 Text(
                   'Attendance: $_attendance at ${DateTime.fromMillisecondsSinceEpoch(_attendanceDate!).toLocal()}',
                   style: const TextStyle(fontSize: 12),
+                ),
+              if (isAdmin)
+                ElevatedButton(
+                  onPressed: widget.readOnly ? null : _clear,
+                  child: const Text('Admin Clear All'),
                 ),
             ],
           ),

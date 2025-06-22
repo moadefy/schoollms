@@ -1,5 +1,5 @@
-import 'dart:convert'; // Added for jsonEncode and jsonDecode
-import 'package:sqflite/sqflite.dart'; // Added for Database
+import 'dart:convert'; // For jsonEncode and jsonDecode
+import 'package:sqflite/sqflite.dart'; // For Database
 
 class Assessment {
   final String id;
@@ -8,6 +8,7 @@ class Assessment {
   final int? timerSeconds; // For test/exam
   final DateTime? closeTime; // Auto-close time
   final List<String> questionIds;
+  final String? slotId; // New field to link to timetable_slot
 
   Assessment({
     required this.id,
@@ -16,19 +17,20 @@ class Assessment {
     this.timerSeconds,
     this.closeTime,
     required this.questionIds,
+    this.slotId, // Added as optional
   });
 
   Map<String, dynamic> toMap() => {
         'id': id,
-        'classIds': jsonEncode(classIds), // Now recognized with import
+        'classIds': jsonEncode(classIds),
         'type': type,
         'timerSeconds': timerSeconds,
         'closeTime': closeTime?.millisecondsSinceEpoch,
-        'questionIds': jsonEncode(questionIds), // Now recognized with import
+        'questionIds': jsonEncode(questionIds),
+        'slotId': slotId, // Added to map
       };
 
   static Future<void> createTable(Database db) async {
-    // Database now recognized
     await db.execute('''
       CREATE TABLE assessments (
         id TEXT PRIMARY KEY,
@@ -36,7 +38,8 @@ class Assessment {
         type TEXT NOT NULL,
         timerSeconds INTEGER,
         closeTime INTEGER,
-        questionIds TEXT NOT NULL
+        questionIds TEXT NOT NULL,
+        slotId TEXT -- Added column for slot association
       )
     ''');
   }
@@ -44,15 +47,15 @@ class Assessment {
   factory Assessment.fromMap(Map<String, dynamic> map) {
     return Assessment(
       id: map['id'] as String,
-      classIds: (jsonDecode(map['classIds'] as String) as List)
-          .cast<String>(), // Now recognized
+      classIds: (jsonDecode(map['classIds'] as String) as List).cast<String>(),
       type: map['type'] as String,
       timerSeconds: map['timerSeconds'] as int?,
       closeTime: map['closeTime'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['closeTime'] as int)
           : null,
-      questionIds: (jsonDecode(map['questionIds'] as String) as List)
-          .cast<String>(), // Now recognized
+      questionIds:
+          (jsonDecode(map['questionIds'] as String) as List).cast<String>(),
+      slotId: map['slotId'] as String?, // Added to fromMap
     );
   }
 }

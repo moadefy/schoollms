@@ -1,13 +1,13 @@
 import 'package:sqflite/sqflite.dart';
 
 class LearnerTimetable {
-  final String id; // Changed from int to String for UUID
+  final String id;
   final String learnerId;
   final String classId;
   final String timeSlot;
-  final String status;
-  final String? attendance;
-  final int? attendanceDate;
+  String status;
+  String? attendance;
+  int? attendanceDate;
 
   LearnerTimetable({
     required this.id,
@@ -21,7 +21,7 @@ class LearnerTimetable {
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id, // Store as string
+      'id': id,
       'learnerId': learnerId,
       'classId': classId,
       'timeSlot': timeSlot,
@@ -31,31 +31,9 @@ class LearnerTimetable {
     };
   }
 
-  static Future<void> createTable(Database db) async {
-    await db.execute('''
-      CREATE TABLE learner_timetables (
-        id TEXT PRIMARY KEY, -- Changed to TEXT PRIMARY KEY for UUID
-        learnerId TEXT NOT NULL,
-        classId TEXT NOT NULL,
-        timeSlot TEXT NOT NULL,
-        status TEXT NOT NULL,
-        attendance TEXT,
-        attendanceDate INTEGER,
-        modified_at INTEGER DEFAULT (CAST((julianday('now') - 2440587.5)*86400000 AS INTEGER))
-      )
-    ''');
-    await db.execute('''
-      CREATE TRIGGER update_learner_timetables_modified_at
-      AFTER UPDATE ON learner_timetables
-      BEGIN
-        UPDATE learner_timetables SET modified_at = CAST((julianday('now') - 2440587.5)*86400000 AS INTEGER) WHERE id = NEW.id;
-      END;
-    ''');
-  }
-
   factory LearnerTimetable.fromMap(Map<String, dynamic> map) {
     return LearnerTimetable(
-      id: map['id'] as String, // Cast id as String
+      id: map['id'] as String,
       learnerId: map['learnerId'] as String,
       classId: map['classId'] as String,
       timeSlot: map['timeSlot'] as String,
@@ -63,5 +41,22 @@ class LearnerTimetable {
       attendance: map['attendance'] as String?,
       attendanceDate: map['attendanceDate'] as int?,
     );
+  }
+
+  static Future<void> createTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE learner_timetables (
+        id TEXT PRIMARY KEY,
+        learnerId TEXT NOT NULL,
+        classId TEXT NOT NULL,
+        timeSlot TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attendance TEXT,
+        attendanceDate INTEGER,
+        modified_at INTEGER DEFAULT 0,
+        FOREIGN KEY (learnerId) REFERENCES learners(id) ON DELETE CASCADE,
+        FOREIGN KEY (classId) REFERENCES classes(id) ON DELETE CASCADE
+      )
+    ''');
   }
 }

@@ -5,6 +5,8 @@ import 'package:pdf_render/pdf_render.dart';
 import 'dart:convert'; // Added for jsonDecode
 import 'package:schoollms/services/database_service.dart';
 import 'package:schoollms/models/learnertimetable.dart'; // Corrected for LearnerTimetable
+import 'package:schoollms/models/timetable.dart';
+import 'package:schoollms/models/class.dart';
 import 'package:schoollms/models/question.dart'; // For Question
 import 'package:schoollms/models/answer.dart'; // For Answer
 import 'package:schoollms/models/asset.dart'; // For Asset
@@ -13,8 +15,16 @@ import 'package:schoollms/widgets/canvas_widget.dart';
 
 class LearnerCanvasScreen extends StatefulWidget {
   final String learnerId;
+  final String? timetableId; // Optional parameter for context
+  final String? teacherId; // Optional parameter for context
+  final String? userRole; // Optional parameter for context
 
-  LearnerCanvasScreen({required this.learnerId});
+  LearnerCanvasScreen({
+    required this.learnerId,
+    this.timetableId,
+    this.userRole,
+    this.teacherId,
+  });
 
   @override
   _LearnerCanvasScreenState createState() => _LearnerCanvasScreenState();
@@ -26,6 +36,7 @@ class _LearnerCanvasScreenState extends State<LearnerCanvasScreen> {
   List<Question> _questions = [];
   Map<String, dynamic> _answers = {}; // Updated to store strokes and assets
   int _totalPages = 0;
+  String? _effectiveTimetableId; // To store the resolved timetableId
 
   @override
   void initState() {
@@ -40,9 +51,50 @@ class _LearnerCanvasScreenState extends State<LearnerCanvasScreen> {
       _timetables = timetables;
       _selectedTimetable = timetables.isNotEmpty ? timetables[0] : null;
       if (_selectedTimetable != null) {
+        _resolveTimetableId();
         _loadQuestions();
       }
     });
+  }
+
+  Future<void> _resolveTimetableId() async {
+    final db = Provider.of<DatabaseService>(context, listen: false);
+    if (widget.timetableId != null) {
+      setState(() {
+        _effectiveTimetableId = widget.timetableId;
+      });
+      return;
+    }
+    if (_selectedTimetable != null) {
+      // Fetch TimetableSlot to get classId and timeSlot
+      final slots =
+          await db.getTimetableSlotsByTimetableId(_selectedTimetable!.id);
+      if (slots.isEmpty) {
+        setState(() {
+          _effectiveTimetableId = Uuid().v4(); // Fallback if no slots
+        });
+        return;
+      }
+      final classId = slots.first.classId;
+      final timeSlot = slots.first.timeSlot;
+
+      // Fetch timetable for the learner's class and time slot
+      final timetables = await db.getTimetables(widget.learnerId);
+      final matchingTimetable = timetables.firstWhere(
+        (t) =>
+            t.id ==
+            _selectedTimetable!.id, // Match by timetable ID for consistency
+        orElse: () => Timetable(
+          id: Uuid().v4(),
+          teacherId: widget.learnerId,
+          userRole: 'learner',
+          userId: widget.teacherId,
+        ),
+      );
+      setState(() {
+        _effectiveTimetableId = matchingTimetable.id;
+      });
+    }
   }
 
   Future<void> _loadQuestions() async {
@@ -150,6 +202,7 @@ class _LearnerCanvasScreenState extends State<LearnerCanvasScreen> {
             onChanged: (value) {
               setState(() {
                 _selectedTimetable = value;
+                _resolveTimetableId();
                 _loadQuestions();
               });
             },
@@ -193,6 +246,8 @@ class _LearnerCanvasScreenState extends State<LearnerCanvasScreen> {
                                 onSave: () {},
                                 onUpdate: (data) {},
                                 initialAssets: initialAssets,
+                                timetableId: _effectiveTimetableId,
+                                userRole: widget.userRole ?? 'learner',
                               ),
                             ),
                             Divider(),
@@ -221,6 +276,8 @@ class _LearnerCanvasScreenState extends State<LearnerCanvasScreen> {
                                     };
                                   });
                                 },
+                                timetableId: _effectiveTimetableId,
+                                userRole: widget.userRole ?? 'learner',
                               ),
                             ),
                           ],

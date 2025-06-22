@@ -23,7 +23,11 @@ void main() async {
 
   // Initialize services
   final dbService = DatabaseService();
-  await dbService.init();
+  try {
+    await dbService.init();
+  } catch (e) {
+    print("Initialization error: $e");
+  }
   final syncService = SyncService(dbService);
   final backgroundSyncService = BackgroundSyncService(dbService, syncService);
 

@@ -6,6 +6,8 @@ import 'package:schoollms/models/teacher.dart';
 import 'package:schoollms/models/learner.dart';
 import 'package:schoollms/models/class.dart';
 import 'package:schoollms/models/timetable.dart';
+import 'package:schoollms/models/timetable_slot.dart';
+import 'package:schoollms/models/timetable_slot_association.dart';
 import 'package:schoollms/models/learnertimetable.dart';
 import 'package:schoollms/models/question.dart';
 import 'package:schoollms/models/answer.dart';
@@ -17,34 +19,84 @@ import 'package:schoollms/widgets/canvas_widget.dart';
 class DatabaseService {
   Database? _db;
   final _uuid = const Uuid(); // Changed to const for performance
+  static const int _baseVersion = 5; // Updated to current base version
 
   Future<void> init() async {
-    print("Starting database initialization");
+    print("Starting database initialization at ${DateTime.now()} SAST");
+    final databasesPath = await getDatabasesPath();
+    final path = '$databasesPath/schoollms.db';
+
+    // Check if database exists and get its version
+    int? existingVersion;
+    try {
+      final result = await _db?.rawQuery('PRAGMA user_version');
+      existingVersion = result != null && result.isNotEmpty
+          ? Sqflite.firstIntValue(result) ?? 0
+          : 0;
+      print("Existing database version: $existingVersion");
+    } catch (e) {
+      print("Error checking version: $e");
+    }
+
+    // Determine the new version
+    int newVersion = _baseVersion;
+    if (existingVersion != null && existingVersion > 0) {
+      newVersion = existingVersion + 1; // Increment version on reinstall/update
+      print("Upgrading to version: $newVersion");
+    } else {
+      print("Creating new database with version: $newVersion");
+    }
+
     _db = await openDatabase(
-      'schoollms.db',
-      version: 2, // Increment version to trigger migration if needed
+      path,
+      version: newVersion,
       onCreate: (db, version) async {
-        print("Creating tables");
+        print("Creating tables for version $version with db: $db");
         await _createTables(db);
-        print("Seeding data");
-        await _seedData(db);
+        print("Seeding data with db: $db");
+        await _seedData(db); // Pass db explicitly
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        print("Upgrading database from $oldVersion to $newVersion");
-        if (oldVersion < 2) {
-          try {
-            print("Applying schema updates for version 2");
-            // No migration needed for fresh install, but prepare for future
-            await _createTables(db); // Recreate tables to ensure consistency
-            print("Schema updated successfully");
-          } catch (e) {
-            print("Upgrade error: $e");
-            rethrow; // Let the app crash with details for debugging
-          }
-        }
+        print(
+            "Upgrading database from $oldVersion to $newVersion with db: $db");
+        await _migrateDatabase(db, oldVersion, newVersion);
+      },
+      onDowngrade: (db, oldVersion, newVersion) async {
+        print(
+            "Downgrading database from $oldVersion to $newVersion with db: $db");
+        await _migrateDatabase(db, oldVersion, newVersion);
       },
     );
-    print("Database initialized");
+    print("Database initialized with version $newVersion, _db: $_db");
+  }
+
+  Future<void> _migrateDatabase(
+      Database db, int oldVersion, int newVersion) async {
+    try {
+      // Migration from version 1 to 2 (hypothetical initial schema)
+      if (oldVersion < 2) {
+        await db.execute('ALTER TABLE timetables ADD COLUMN userRole TEXT');
+        await db.execute('ALTER TABLE timetables ADD COLUMN userId TEXT');
+        print("Added userRole and userId to timetables (v2)");
+      }
+      // Migration from version 2 to 3
+      if (oldVersion < 3) {
+        await db.execute('ALTER TABLE teachers ADD COLUMN timetableId TEXT');
+        await db.execute('ALTER TABLE learners ADD COLUMN timetableId TEXT');
+        print("Added timetableId to teachers and learners (v3)");
+      }
+      // Migration from version 3 to 4 (handle potential duplicate IDs or schema adjustments)
+      if (oldVersion < 4) {
+        // Optional: Add checks or adjustments for existing data if needed
+        print(
+            "Upgrading to version 4 - No schema changes, ensuring unique IDs");
+      }
+      // Update user_version to reflect the new version
+      await db.execute('PRAGMA user_version = $newVersion');
+    } catch (e) {
+      print("Migration error: $e");
+      rethrow; // Let the app crash with details for debugging
+    }
   }
 
   Future<void> _createTables(Database db) async {
@@ -56,6 +108,10 @@ class DatabaseService {
     await Class.createTable(db);
     print("Creating Timetable table");
     await Timetable.createTable(db);
+    print("Creating TimetableSlot table");
+    await TimetableSlot.createTable(db);
+    print("Creating TimetableSlotAssociation table");
+    await TimetableSlotAssociation.createTable(db);
     print("Creating LearnerTimetable table");
     await LearnerTimetable.createTable(db);
     print("Creating Question table");
@@ -66,83 +122,110 @@ class DatabaseService {
     await Assessment.createTable(db);
     print("Creating Assets table");
     await db.execute('''
-      CREATE TABLE assets (
-        id TEXT PRIMARY KEY,
-        learnerId TEXT,
-        questionId TEXT,
-        type TEXT, -- e.g., 'image' or 'pdf'
-        data TEXT, -- Base64-encoded data or path
-        positionX REAL,
-        positionY REAL,
-        scale REAL,
-        created_at INTEGER
-      )
-    ''');
+    CREATE TABLE assets (
+      id TEXT PRIMARY KEY,
+      learnerId TEXT,
+      questionId TEXT,
+      type TEXT,
+      data TEXT,
+      positionX REAL,
+      positionY REAL,
+      scale REAL,
+      created_at INTEGER
+    )
+  ''');
     print("Creating Analytics table");
     await db.execute('''
-      CREATE TABLE analytics (
-        id TEXT PRIMARY KEY,
-        questionId TEXT,
-        learnerId TEXT,
-        timeSpentSeconds INTEGER,
-        submissionStatus TEXT,
-        deviceId TEXT,
-        timestamp INTEGER
-      )
-    ''');
+    CREATE TABLE analytics (
+      id TEXT PRIMARY KEY,
+      questionId TEXT,
+      learnerId TEXT,
+      timeSpentSeconds INTEGER,
+      submissionStatus TEXT,
+      deviceId TEXT,
+      timestamp INTEGER
+    )
+  ''');
     print("Creating SyncPending table");
     await db.execute('''
-      CREATE TABLE sync_pending (
-        id TEXT PRIMARY KEY,
-        table_name TEXT,
-        operation TEXT,
-        data TEXT,
-        modified_at INTEGER
-      )
-    ''');
+    CREATE TABLE sync_pending (
+      id TEXT PRIMARY KEY,
+      table_name TEXT,
+      operation TEXT,
+      data TEXT,
+      modified_at INTEGER
+    )
+  ''');
     print("Creating LearnerDevices table");
     await db.execute('''
-      CREATE TABLE learner_devices (
-        learnerId TEXT PRIMARY KEY,
-        deviceId TEXT,
-        psk TEXT,
-        last_sync_time INTEGER
-      )
-    ''');
+    CREATE TABLE learner_devices (
+      learnerId TEXT PRIMARY KEY,
+      deviceId TEXT,
+      psk TEXT,
+      last_sync_time INTEGER
+    )
+  ''');
     print("Creating TeacherDevices table");
     await db.execute('''
-      CREATE TABLE teacher_devices (
-        teacherId TEXT,
-        classId TEXT,
-        ip TEXT,
-        port INTEGER,
-        last_discovered INTEGER,
-        PRIMARY KEY (teacherId, classId)
-      )
-    ''');
+    CREATE TABLE teacher_devices (
+      teacherId TEXT,
+      classId TEXT,
+      ip TEXT,
+      port INTEGER,
+      last_discovered INTEGER,
+      PRIMARY KEY (teacherId, classId)
+    )
+  ''');
   }
 
   Future<void> _seedData(Database db) async {
+    print("Seeding data with database: $db");
     final teachersCount = Sqflite.firstIntValue(
         await db.query('teachers', columns: ['COUNT(*)']));
     if (teachersCount == 0) {
       print("Seeding Teachers");
       await db.insert(
-          'teachers', Teacher(id: 'teacher_1', name: 'Ms. Smith').toMap());
+          'teachers',
+          Teacher(id: 'teacher_1', name: 'Ms. Smith', timetableId: null)
+              .toMap());
       await db.insert(
-          'teachers', Teacher(id: 'teacher_2', name: 'Mr. Jones').toMap());
+          'teachers',
+          Teacher(id: 'teacher_2', name: 'Mr. Jones', timetableId: null)
+              .toMap());
 
       print("Seeding Learners");
-      await db.insert('learners',
-          Learner(id: 'learner_1', name: 'Alice', grade: '10').toMap());
-      await db.insert('learners',
-          Learner(id: 'learner_2', name: 'Bob', grade: '10').toMap());
-      await db.insert('learners',
-          Learner(id: 'learner_3', name: 'Charlie', grade: '11').toMap());
-      await db.insert('learners',
-          Learner(id: 'learner_4', name: 'David', grade: '11').toMap());
-      await db.insert('learners',
-          Learner(id: 'learner_5', name: 'Eve', grade: '10').toMap());
+      await db.insert(
+          'learners',
+          Learner(
+                  id: 'learner_1',
+                  name: 'Alice',
+                  grade: '10',
+                  timetableId: null)
+              .toMap());
+      await db.insert(
+          'learners',
+          Learner(id: 'learner_2', name: 'Bob', grade: '10', timetableId: null)
+              .toMap());
+      await db.insert(
+          'learners',
+          Learner(
+                  id: 'learner_3',
+                  name: 'Charlie',
+                  grade: '11',
+                  timetableId: null)
+              .toMap());
+      await db.insert(
+          'learners',
+          Learner(
+                  id: 'learner_4',
+                  name: 'David',
+                  grade: '11',
+                  timetableId: null)
+              .toMap());
+      await db.insert(
+          'learners',
+          Learner(id: 'learner_5', name: 'Eve', grade: '10', timetableId: null)
+              .toMap());
 
       print("Seeding Classes");
       await db.insert(
@@ -170,6 +253,62 @@ class DatabaseService {
                   grade: '11')
               .toMap());
 
+      print("Seeding Timetables and TimetableSlots");
+      // Teacher 1 Timetable and Slots
+      final teacher1Timetable = Timetable(
+          id: _uuid.v4(),
+          teacherId: 'teacher_1',
+          userId: 'teacher_1',
+          userRole: 'teacher');
+      final seedDate = DateTime.now().toIso8601String().split('T')[0];
+      await insertTimetable(
+          teacher1Timetable,
+          [
+            {
+              'id': _uuid.v4(),
+              'classId': 'class_1',
+              'timeSlot': '$seedDate 09:00-10:00',
+              'learnerIds': ['learner_1', 'learner_2', 'learner_5'],
+            },
+            {
+              'id': _uuid.v4(),
+              'classId': 'class_1',
+              'timeSlot': '$seedDate 10:00-11:00',
+              'learnerIds': ['learner_1', 'learner_2', 'learner_5'],
+            },
+            {
+              'id': _uuid.v4(),
+              'classId': 'class_2',
+              'timeSlot': '$seedDate 11:00-12:00',
+              'learnerIds': ['learner_1', 'learner_2', 'learner_5'],
+            },
+          ],
+          db);
+
+      // Teacher 2 Timetable and Slots
+      final teacher2Timetable = Timetable(
+          id: _uuid.v4(),
+          teacherId: 'teacher_2',
+          userId: 'teacher_2',
+          userRole: 'teacher');
+      await insertTimetable(
+          teacher2Timetable,
+          [
+            {
+              'id': _uuid.v4(),
+              'classId': 'class_3',
+              'timeSlot': '$seedDate 13:00-14:00',
+              'learnerIds': ['learner_3', 'learner_4'],
+            },
+            {
+              'id': _uuid.v4(),
+              'classId': 'class_3',
+              'timeSlot': '$seedDate 14:00-15:00',
+              'learnerIds': ['learner_3', 'learner_4'],
+            },
+          ],
+          db);
+
       print("Registering Learner Devices");
       await _registerLearnerDevice(
           db, 'learner_1', 'device_1', 'teacher_1', 'class_1');
@@ -177,6 +316,10 @@ class DatabaseService {
           db, 'learner_2', 'device_2', 'teacher_1', 'class_1');
       await _registerLearnerDevice(
           db, 'learner_3', 'device_3', 'teacher_2', 'class_3');
+      await _registerLearnerDevice(
+          db, 'learner_4', 'device_4', 'teacher_2', 'class_3');
+      await _registerLearnerDevice(
+          db, 'learner_5', 'device_5', 'teacher_1', 'class_2');
     }
   }
 
@@ -253,104 +396,122 @@ class DatabaseService {
         : {};
   }
 
-  Future<String?> validateTimetable(Timetable timetable) async {
+  Future<String?> validateTimetable(
+      Timetable timetable, List<Map<String, dynamic>> slots,
+      [Database? db]) async {
+    final database = db ?? _db;
+    if (database == null) {
+      return 'Database not initialized';
+    }
     try {
-      final timeParts = timetable.timeSlot.split(' ');
-      if (timeParts.length != 2)
-        return 'Invalid time slot format (expected "date time-time")';
-      final date = timeParts[0];
-      final times = timeParts[1].split('-');
-      if (times.length != 2) return 'Invalid time range';
-      final startTime = times[0].split(':');
-      final endTime = times[1].split(':');
-      if (startTime.length != 2 || endTime.length != 2)
-        return 'Invalid time format (HH:MM)';
-
-      final startHour = int.parse(startTime[0]);
-      final endHour = int.parse(endTime[0]);
-      final startMinute = int.parse(startTime[1]);
-      final endMinute = int.parse(endTime[1]);
-      if (startHour < 0 ||
-          startHour > 23 ||
-          endHour < 0 ||
-          endHour > 23 ||
-          startMinute < 0 ||
-          startMinute > 59 ||
-          endMinute < 0 ||
-          endMinute > 59) {
-        return 'Invalid hour or minute values';
+      print(
+          "Validating timetable: ${timetable.toMap()} with ${slots.length} slots");
+      if (timetable.id == null) {
+        return 'Timetable ID cannot be null';
       }
-      if (startHour > endHour ||
-          (startHour == endHour && startMinute >= endMinute)) {
-        return 'Start time must be before end time';
+      if (timetable.teacherId == null) {
+        return 'Teacher ID cannot be null';
+      }
+      if (slots == null || slots.isEmpty) {
+        return 'At least one timetable slot is required';
       }
 
-      final startMinutes = startHour * 60 + startMinute;
-      final endMinutes = endHour * 60 + endMinute;
-      final newDuration = endMinutes - startMinutes;
+      final existingSlots = await database.query('timetable_slots') ?? [];
+      print("Found ${existingSlots.length} existing slots");
 
-      final existing = await _db!.query('timetables',
-          where: 'classId = ? AND timeSlot LIKE ?',
-          whereArgs: [timetable.classId, '$date%']);
-      int totalDuration = newDuration;
-      for (final map in existing) {
-        final existingSlot = map['timeSlot'] as String;
-        final existingTimes = existingSlot.split(' ')[1].split('-');
-        final existingStart = existingTimes[0].split(':');
-        final existingEnd = existingTimes[1].split(':');
-        final exStartHour = int.parse(existingStart[0]);
-        final exStartMinute = int.parse(existingStart[1]);
-        final exEndHour = int.parse(existingEnd[0]);
-        final exEndMinute = int.parse(existingEnd[1]);
-        final exStartMinutes = exStartHour * 60 + exStartMinute;
-        final exEndMinutes = exEndHour * 60 + exEndMinute;
-
-        if (!(endMinutes <= exStartMinutes || startMinutes >= exEndMinutes)) {
-          return 'Time slot overlaps with existing schedule';
+      for (final newSlot in slots) {
+        print("Validating slot: $newSlot");
+        final timeSlot = newSlot['timeSlot'] as String?;
+        if (timeSlot == null) return 'Invalid time slot: null value';
+        final newTimeParts = timeSlot.split(' ');
+        print("Time parts: $newTimeParts");
+        if (newTimeParts.length < 2)
+          return 'Invalid time slot format (expected date and time)';
+        final date = newTimeParts[0];
+        final timeRange = newTimeParts.length > 1 ? newTimeParts[1] : '';
+        final times = timeRange.split('-');
+        if (times.length != 2 || times[0].isEmpty || times[1].isEmpty)
+          return 'Invalid time range';
+        final startTime = times[0].split(':');
+        final endTime = times[1].split(':');
+        if (startTime.length != 2 ||
+            endTime.length != 2 ||
+            startTime[0].isEmpty ||
+            startTime[1].isEmpty ||
+            endTime[0].isEmpty ||
+            endTime[1].isEmpty) {
+          return 'Invalid time format';
         }
-        totalDuration += exEndMinutes - exStartMinutes;
-      }
 
-      const maxDailyMinutes = 360; // 6 hours
-      if (totalDuration > maxDailyMinutes) {
-        return 'Total class hours exceed $maxDailyMinutes-minute daily limit';
-      }
-
-      final classData = await _db!
-          .query('classes', where: 'id = ?', whereArgs: [timetable.classId]);
-      if (classData.isEmpty) return 'Invalid class ID';
-      final classGrade = classData[0]['grade'] as String;
-      for (final learnerId in timetable.learnerIds) {
-        final learnerData = await _db!
-            .query('learners', where: 'id = ?', whereArgs: [learnerId]);
-        if (learnerData.isEmpty || learnerData[0]['grade'] != classGrade) {
-          return 'Learner $learnerId does not match class grade $classGrade';
+        final startHour = int.tryParse(startTime[0]) ?? -1;
+        final endHour = int.tryParse(endTime[0]) ?? -1;
+        final startMinute = int.tryParse(startTime[1]) ?? -1;
+        final endMinute = int.tryParse(endTime[1]) ?? -1;
+        print(
+            "Parsed times - Start: $startHour:$startMinute, End: $endHour:$endMinute");
+        if (startHour < 0 ||
+            startHour > 23 ||
+            endHour < 0 ||
+            endHour > 23 ||
+            startMinute < 0 ||
+            startMinute > 59 ||
+            endMinute < 0 ||
+            endMinute > 59) {
+          return 'Invalid hour or minute values';
         }
-      }
+        if (startHour > endHour ||
+            (startHour == endHour && startMinute >= endMinute)) {
+          return 'Start time must be before end time';
+        }
 
-      for (final learnerId in timetable.learnerIds) {
-        final learnerTimetables = await _db!.query('learner_timetables',
-            where: 'learnerId = ? AND timeSlot LIKE ?',
-            whereArgs: [learnerId, '$date%']);
-        for (final lt in learnerTimetables) {
-          final ltSlot = lt['timeSlot'] as String;
-          final ltTimes = ltSlot.split(' ')[1].split('-');
-          final ltStart = ltTimes[0].split(':');
-          final ltEnd = ltTimes[1].split(':');
-          final ltStartHour = int.parse(ltStart[0]);
-          final ltStartMinute = int.parse(ltStart[1]);
-          final ltEndHour = int.parse(ltEnd[0]);
-          final ltEndMinute = int.parse(ltEnd[1]);
-          final ltStartMinutes = ltStartHour * 60 + ltStartMinute;
-          final ltEndMinutes = ltEndHour * 60 + ltEndMinute;
-          if (!(endMinutes <= ltStartMinutes || startMinutes >= ltEndMinutes)) {
-            return 'Learner $learnerId has a conflicting schedule at $ltSlot';
+        final classId = newSlot['classId'] as String?;
+        if (classId == null) return 'Invalid class ID: null value';
+        final classData = await database
+            .query('classes', where: 'id = ?', whereArgs: [classId]);
+        print("Class data for $classId: $classData");
+        if (classData.isEmpty) return 'Invalid class ID';
+
+        for (final existingSlot in existingSlots) {
+          final existingTimeSlot = existingSlot['timeSlot'] as String?;
+          final existingClassId = existingSlot['classId'] as String?;
+          if (existingTimeSlot != null &&
+              existingClassId != null &&
+              classId == existingClassId &&
+              timeSlot == existingTimeSlot) {
+            return 'Time slot and class overlap with existing schedule';
+          }
+        }
+
+        // Learner conflict check
+        final learnerIds =
+            (newSlot['learnerIds'] as List?)?.cast<String>() ?? [];
+        if (learnerIds.isEmpty) return 'No learner IDs provided';
+        final classGrade =
+            classData.isNotEmpty ? classData[0]['grade'] as String? : null;
+        if (classGrade == null) return 'Class grade is null';
+        for (final learnerId in learnerIds) {
+          final learnerData = await database
+              .query('learners', where: 'id = ?', whereArgs: [learnerId]);
+          print("Learner data for $learnerId: $learnerData");
+          if (learnerData.isEmpty ||
+              (learnerData[0]['grade'] as String?) != classGrade) {
+            return 'Learner $learnerId does not match class grade $classGrade';
+          }
+          final learnerSlots = await database.query('timetable_slots',
+              where: 'learnerIds LIKE ? AND timeSlot LIKE ?',
+              whereArgs: ['%$learnerId%', '$date%']);
+          for (final ls in learnerSlots) {
+            final lsSlot = ls['timeSlot'] as String?;
+            if (lsSlot != null && timeSlot == lsSlot) {
+              return 'Learner $learnerId has a conflicting schedule at $lsSlot';
+            }
           }
         }
       }
 
       return null;
     } catch (e) {
+      print("Validation exception: $e");
       return 'Validation error: $e';
     }
   }
@@ -360,6 +521,11 @@ class DatabaseService {
       await _db!.transaction((txn) async {
         await txn.insert('teachers', teacher.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
+        if (teacher.timetableId != null) {
+          await txn.update(
+              'timetables', {'userId': teacher.id, 'userRole': 'teacher'},
+              where: 'id = ?', whereArgs: [teacher.timetableId]);
+        }
         await _queueSync(txn, 'teachers', 'insert', teacher.toMap());
       });
     } catch (e) {
@@ -372,6 +538,11 @@ class DatabaseService {
       await _db!.transaction((txn) async {
         await txn.insert('learners', learner.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
+        if (learner.timetableId != null) {
+          await txn.update(
+              'timetables', {'userId': learner.id, 'userRole': 'learner'},
+              where: 'id = ?', whereArgs: [learner.timetableId]);
+        }
         await _queueSync(txn, 'learners', 'insert', learner.toMap());
       });
     } catch (e) {
@@ -388,6 +559,7 @@ class DatabaseService {
                 id: map['id'] as String,
                 name: map['name'] as String,
                 grade: map['grade'] as String,
+                timetableId: map['timetableId'] as String?,
               ))
           .toList();
     } catch (e) {
@@ -424,25 +596,137 @@ class DatabaseService {
     }
   }
 
-  Future<void> insertTimetable(Timetable timetable) async {
+  Future<void> insertTimetable(
+      Timetable timetable, List<Map<String, dynamic>> slots,
+      [Database? db]) async {
+    final database = db ?? _db;
+    if (database == null) {
+      throw Exception('Database not initialized');
+    }
     try {
-      final validationError = await validateTimetable(timetable);
+      // Validate the timetable and slots
+      final validationError =
+          await validateTimetable(timetable, slots, database);
       if (validationError != null) throw Exception(validationError);
-      await _db!.transaction((txn) async {
-        await txn.insert('timetables', timetable.toMap(),
+
+      Map<String, dynamic> timetableData = timetable.toMap();
+      if (timetable.userRole == null) timetableData['userRole'] = 'teacher';
+      if (timetable.userId == null && timetableData['userRole'] == 'teacher') {
+        timetableData['userId'] = timetable.teacherId;
+      }
+
+      // Check for existing timetable for the teacher
+      final existingTimetable = await database.query('timetables',
+          where: 'userId = ? AND userRole = ?',
+          whereArgs: [timetableData['userId'], timetableData['userRole']],
+          limit: 1);
+      if (existingTimetable.isNotEmpty) {
+        timetableData['id'] = existingTimetable.first['id'] as String;
+      } else {
+        timetableData['id'] = _uuid.v4();
+      }
+
+      // Update teacher's timetableId
+      if (timetableData['userRole'] == 'teacher') {
+        await database.update('teachers', {'timetableId': timetableData['id']},
+            where: 'id = ?', whereArgs: [timetable.teacherId]);
+      }
+
+      await database.transaction((txn) async {
+        // Insert or update the timetable
+        await txn.insert('timetables', timetableData,
             conflictAlgorithm: ConflictAlgorithm.replace);
-        await _queueSync(txn, 'timetables', 'insert', timetable.toMap());
-        await _generateLearnerTimetables(txn, timetable);
-        final classData = await txn
-            .query('classes', where: 'id = ?', whereArgs: [timetable.classId]);
-        if (classData.isEmpty) {
-          throw Exception('Invalid class ID');
+        await _queueSync(txn, 'timetables', 'insert', timetableData);
+
+        // Insert TimetableSlot entries for each slot with class association
+        List<String> slotIds = [];
+        for (final slot in slots) {
+          final slotId = slot['id'] as String? ?? _uuid.v4();
+          final classId = slot['classId'] as String?;
+          final timeSlot = slot['timeSlot'] as String?;
+          final learnerIds =
+              (slot['learnerIds'] as List?)?.cast<String>() ?? [];
+
+          if (classId == null || timeSlot == null) {
+            throw Exception(
+                'Invalid slot data: classId and timeSlot are required');
+          }
+
+          final timetableSlot = TimetableSlot(
+            id: slotId,
+            classId: classId,
+            timeSlot: timeSlot,
+            learnerIds: learnerIds,
+          );
+          await txn.insert('timetable_slots', timetableSlot.toMap(),
+              conflictAlgorithm: ConflictAlgorithm.replace);
+          await _queueSync(
+              txn, 'timetable_slots', 'insert', timetableSlot.toMap());
+          slotIds.add(slotId);
+
+          // Update learners' timetableId
+          for (final learnerId in learnerIds) {
+            await txn.update('learners', {'timetableId': timetableData['id']},
+                where: 'id = ?', whereArgs: [learnerId]);
+          }
         }
-        final teacherId = classData[0]['teacherId'] as String;
-        for (final learnerId in timetable.learnerIds) {
-          await _registerLearnerDevice(txn, learnerId, 'device_$learnerId',
-              teacherId, timetable.classId);
+
+        // Associate teacher with slots
+        if (slotIds.isNotEmpty) {
+          final teacherAssociationId = _uuid.v4();
+          await txn.insert(
+              'timetable_slot_association',
+              TimetableSlotAssociation(
+                      id: teacherAssociationId,
+                      userId: timetable.teacherId,
+                      timetableId: timetableData['id'],
+                      slotId: slotIds[0])
+                  .toMap(),
+              conflictAlgorithm: ConflictAlgorithm.replace);
+          await _queueSync(
+              txn,
+              'timetable_slot_association',
+              'insert',
+              TimetableSlotAssociation(
+                      id: teacherAssociationId,
+                      userId: timetable.teacherId,
+                      timetableId: timetableData['id'],
+                      slotId: slotIds[0])
+                  .toMap());
         }
+
+        // Associate learners with slots
+        for (final slot in slots) {
+          final slotIndex = slots.indexOf(slot);
+          final slotId = slotIds[slotIndex];
+          final learnerIds =
+              (slot['learnerIds'] as List?)?.cast<String>() ?? [];
+          for (final learnerId in learnerIds) {
+            final associationId = _uuid.v4();
+            await txn.insert(
+                'timetable_slot_association',
+                TimetableSlotAssociation(
+                        id: associationId,
+                        userId: learnerId,
+                        timetableId: timetableData['id'],
+                        slotId: slotId)
+                    .toMap(),
+                conflictAlgorithm: ConflictAlgorithm.replace);
+            await _queueSync(
+                txn,
+                'timetable_slot_association',
+                'insert',
+                TimetableSlotAssociation(
+                        id: associationId,
+                        userId: learnerId,
+                        timetableId: timetableData['id'],
+                        slotId: slotId)
+                    .toMap());
+          }
+        }
+
+        // Generate LearnerTimetables based on TimetableSlots
+        await _generateLearnerTimetables(txn, Timetable.fromMap(timetableData));
       });
     } catch (e) {
       throw Exception('Failed to insert timetable: $e');
@@ -451,17 +735,25 @@ class DatabaseService {
 
   Future<List<Timetable>> getTimetables(String classId) async {
     try {
-      final maps = await _db!
-          .query('timetables', where: 'classId = ?', whereArgs: [classId]);
-      return maps
-          .map((map) => Timetable(
-                id: map['id'] as String,
-                teacherId: map['teacherId'] as String,
-                classId: map['classId'] as String,
-                timeSlot: map['timeSlot'] as String,
-                learnerIds: (map['learnerIds'] as String).split(','),
-              ))
-          .toList();
+      final maps = await _db!.rawQuery('''
+      SELECT t.id AS timetable_id, t.teacherId, t.userId, t.userRole, ts.id AS slot_id, ts.classId, ts.timeSlot, ts.learnerIds
+      FROM timetables t
+      JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
+      JOIN timetable_slots ts ON tsa.slotId = ts.id
+      WHERE ts.classId = ? AND t.userRole = 'teacher'
+      ORDER BY ts.timeSlot
+    ''', [classId]);
+      final timetables = <Timetable>{}; // Use Set to avoid duplicates
+      for (final map in maps) {
+        final timetable = Timetable(
+          id: map['timetable_id'] as String,
+          teacherId: map['teacherId'] as String,
+          userId: map['userId'] as String?,
+          userRole: map['userRole'] as String?,
+        );
+        timetables.add(timetable); // Add unique timetable
+      }
+      return timetables.toList();
     } catch (e) {
       throw Exception('Failed to fetch timetables: $e');
     }
@@ -470,18 +762,29 @@ class DatabaseService {
   Future<void> _generateLearnerTimetables(
       DatabaseExecutor txn, Timetable timetable) async {
     try {
-      for (final learnerId in timetable.learnerIds) {
-        final learnerTimetable = LearnerTimetable(
-          id: _uuid.v4(), // Generate UUID for id
-          learnerId: learnerId,
-          classId: timetable.classId,
-          timeSlot: timetable.timeSlot,
-          status: 'active',
-        );
-        await txn.insert('learner_timetables', learnerTimetable.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace);
-        await _queueSync(
-            txn, 'learner_timetables', 'insert', learnerTimetable.toMap());
+      // Fetch all slots associated with this timetable
+      final slotAssociations = await txn.query('timetable_slot_association',
+          where: 'timetableId = ?', whereArgs: [timetable.id]);
+      for (final association in slotAssociations) {
+        final slotId = association['slotId'] as String;
+        final slot = await txn.query('timetable_slots',
+            where: 'id = ?', whereArgs: [slotId], limit: 1);
+        if (slot.isNotEmpty) {
+          final learnerIds = (slot[0]['learnerIds'] as String).split(',');
+          for (final learnerId in learnerIds) {
+            final learnerTimetable = LearnerTimetable(
+              id: _uuid.v4(),
+              learnerId: learnerId,
+              classId: slot[0]['classId'] as String,
+              timeSlot: slot[0]['timeSlot'] as String,
+              status: 'active',
+            );
+            await txn.insert('learner_timetables', learnerTimetable.toMap(),
+                conflictAlgorithm: ConflictAlgorithm.replace);
+            await _queueSync(
+                txn, 'learner_timetables', 'insert', learnerTimetable.toMap());
+          }
+        }
       }
     } catch (e) {
       throw Exception('Failed to generate learner timetables: $e');
@@ -491,9 +794,12 @@ class DatabaseService {
   Future<List<LearnerTimetable>> getLearnerTimetable(String learnerId,
       {int sinceTimestamp = 0}) async {
     try {
-      final maps = await _db!.query('learner_timetables',
-          where: 'learnerId = ? AND modified_at > ?',
-          whereArgs: [learnerId, sinceTimestamp]);
+      final maps = await _db!.rawQuery('''
+      SELECT lt.id, lt.learnerId, ts.classId, ts.timeSlot, lt.status, lt.attendance, lt.attendanceDate, lt.modified_at
+      FROM learner_timetables lt
+      JOIN timetable_slots ts ON lt.classId = ts.classId AND lt.timeSlot = ts.timeSlot
+      WHERE lt.learnerId = ? AND (lt.modified_at IS NULL OR lt.modified_at > ?)
+    ''', [learnerId, sinceTimestamp]);
       return maps
           .map((map) => LearnerTimetable(
                 id: map['id'] as String,
@@ -512,6 +818,15 @@ class DatabaseService {
 
   Future<void> insertLearnerTimetable(LearnerTimetable learnerTimetable) async {
     try {
+      // Validate against existing timetable_slots
+      final existingSlot = await _db!.query('timetable_slots',
+          where: 'classId = ? AND timeSlot = ?',
+          whereArgs: [learnerTimetable.classId, learnerTimetable.timeSlot],
+          limit: 1);
+      if (existingSlot.isEmpty) {
+        throw Exception('Invalid classId or timeSlot combination');
+      }
+
       await _db!.transaction((txn) async {
         await txn.insert('learner_timetables', learnerTimetable.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -641,6 +956,28 @@ class DatabaseService {
           .toList();
     } catch (e) {
       throw Exception('Failed to fetch answers by learner: $e');
+    }
+  }
+
+  Future<void> insertAssessment(Assessment assessment) async {
+    try {
+      await _db!.transaction((txn) async {
+        await txn.insert('assessments', assessment.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        await _queueSync(txn, 'assessments', 'insert', assessment.toMap());
+      });
+    } catch (e) {
+      throw Exception('Failed to insert assessment: $e');
+    }
+  }
+
+  Future<List<Assessment>> getAssessmentsByClass(String classId) async {
+    try {
+      final maps = await _db!.query('assessments',
+          where: 'classIds LIKE ?', whereArgs: ['%$classId%']);
+      return maps.map((map) => Assessment.fromMap(map)).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch assessments: $e');
     }
   }
 
@@ -980,28 +1317,6 @@ class DatabaseService {
     }
   }
 
-  Future<void> insertAssessment(Assessment assessment) async {
-    try {
-      await _db!.transaction((txn) async {
-        await txn.insert('assessments', assessment.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace);
-        await _queueSync(txn, 'assessments', 'insert', assessment.toMap());
-      });
-    } catch (e) {
-      throw Exception('Failed to insert assessment: $e');
-    }
-  }
-
-  Future<List<Assessment>> getAssessmentsByClass(String classId) async {
-    try {
-      final maps = await _db!.query('assessments',
-          where: 'classIds LIKE ?', whereArgs: ['%$classId%']);
-      return maps.map((map) => Assessment.fromMap(map)).toList();
-    } catch (e) {
-      throw Exception('Failed to fetch assessments: $e');
-    }
-  }
-
   Future<void> insertAnalytics(Analytics analytics) async {
     try {
       await _db!.transaction((txn) async {
@@ -1036,6 +1351,95 @@ class DatabaseService {
       return maps.map((map) => Analytics.fromJson(map)).toList();
     } catch (e) {
       throw Exception('Failed to fetch analytics by learner: $e');
+    }
+  }
+
+  Future<List<TimetableSlot>> getTimetableSlotsByTimetableId(
+      String timetableId) async {
+    try {
+      final maps = await _db!.query(
+        'timetable_slots',
+        where:
+            'id IN (SELECT slotId FROM timetable_slot_association WHERE timetableId = ?)',
+        whereArgs: [timetableId],
+      );
+      return maps
+          .map((map) => TimetableSlot(
+                id: map['id'] as String,
+                classId: map['classId'] as String,
+                timeSlot: map['timeSlot'] as String,
+                learnerIds: (map['learnerIds'] as String).split(','),
+              ))
+          .toList();
+    } catch (e) {
+      print('Error fetching timetable slots for timetableId $timetableId: $e');
+      throw Exception('Failed to fetch timetable slots: $e');
+    }
+  }
+
+  Future<List<TimetableSlotAssociation>>
+      getTimetableSlotAssociationsByTimetableId(String timetableId) async {
+    try {
+      final maps = await _db!.query(
+        'timetable_slot_association',
+        where: 'timetableId = ?',
+        whereArgs: [timetableId],
+      );
+      return maps
+          .map((map) => TimetableSlotAssociation(
+                id: map['id'] as String,
+                userId: map['userId'] as String,
+                timetableId: map['timetableId'] as String,
+                slotId: map['slotId'] as String,
+              ))
+          .toList();
+    } catch (e) {
+      print(
+          'Error fetching timetable slot associations for timetableId $timetableId: $e');
+      throw Exception('Failed to fetch timetable slot associations: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getTeacherTimetableSlots(
+      String teacherId) async {
+    try {
+      print("Fetching timetable slots for teacherId: $teacherId");
+      final maps = await _db!.rawQuery('''
+      SELECT DISTINCT ts.id AS slot_id, tsa.timetableId, ts.classId, ts.timeSlot, ts.learnerIds,
+             c.subject, c.grade
+      FROM timetables t
+      JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
+      JOIN timetable_slots ts ON tsa.slotId = ts.id
+      JOIN classes c ON ts.classId = c.id
+      WHERE t.teacherId = ? AND t.userRole = 'teacher'
+      ORDER BY ts.timeSlot
+    ''', [teacherId]);
+      print("Teacher timetable slots query result: $maps");
+      return maps;
+    } catch (e) {
+      print("Error fetching teacher timetable slots: $e");
+      throw Exception('Failed to fetch teacher timetable slots: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getLearnerTimetableSlots(
+      String learnerId) async {
+    try {
+      print("Fetching timetable slots for learnerId: $learnerId");
+      final maps = await _db!.rawQuery('''
+      SELECT ts.id AS slot_id, ts.classId, ts.timeSlot, ts.learnerIds,
+             c.subject, c.grade
+      FROM learner_timetables lt
+      JOIN timetable_slots ts ON lt.classId = ts.classId AND lt.timeSlot = ts.timeSlot
+      JOIN classes c ON ts.classId = c.id
+      WHERE lt.learnerId = ?
+      ORDER BY ts.timeSlot
+    ''', [learnerId]);
+      print("Learner timetable slots query result: $maps");
+      return maps;
+    } catch (e) {
+      print("Error fetching learner timetable slots: $e");
+      throw Exception('Failed to fetch learner timetable slots: $e');
     }
   }
 }

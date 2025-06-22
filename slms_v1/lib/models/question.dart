@@ -5,10 +5,10 @@ class Question {
   final String?
       timetableId; // Changed to String? to align with Timetable.id (UUID)
   final String classId;
-  final String? assessmentId; // New field to link to an assessment
-  String
-      content; // Changed to non-final to allow updates, as per previous fixes
+  final String? assessmentId; // Links to an assessment
+  String content; // Non-final to allow updates
   final int? pdfPage; // Null for non-PDF questions
+  final String? slotId; // New field to link to timetable_slot
 
   Question({
     required this.id,
@@ -17,16 +17,18 @@ class Question {
     this.assessmentId,
     required this.content,
     this.pdfPage,
+    this.slotId, // Added as optional
   });
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'timetableId': timetableId, // Optional, can be null, now String
+      'timetableId': timetableId, // Optional, can be null
       'classId': classId,
-      'assessmentId': assessmentId, // New field
+      'assessmentId': assessmentId, // Existing field
       'content': content,
       'pdfPage': pdfPage,
+      'slotId': slotId, // Added to map
     };
   }
 
@@ -38,6 +40,7 @@ class Question {
       assessmentId: map['assessmentId'] as String?,
       content: map['content'] as String,
       pdfPage: map['pdfPage'] as int?,
+      slotId: map['slotId'] as String?, // Added to fromMap
     );
   }
 
@@ -45,11 +48,12 @@ class Question {
     await db.execute('''
       CREATE TABLE questions (
         id TEXT PRIMARY KEY,
-        timetableId TEXT, -- Changed to TEXT to store UUID, optional
+        timetableId TEXT, -- TEXT to store UUID, optional
         classId TEXT NOT NULL,
-        assessmentId TEXT, -- New column, optional
+        assessmentId TEXT, -- Optional, links to assessment
         content TEXT NOT NULL,
-        pdfPage INTEGER
+        pdfPage INTEGER,
+        slotId TEXT -- Added column for slot association
       )
     ''');
   }
