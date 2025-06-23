@@ -3,12 +3,18 @@ import 'package:provider/provider.dart';
 import 'services/database_service.dart';
 import 'services/sync_service.dart';
 import 'services/background_sync_service.dart';
-import 'screens/timetable/teacher_timetable_screen.dart';
-import 'screens/timetable/learner_timetable_screen.dart';
+import 'screens/timetable/timetable_screen.dart'; // Already correct, assuming timetable_screen.dart is the main timetable file
 import 'screens/canvas/teacher_canvas_screen.dart';
 import 'screens/canvas/learner_canvas_screen.dart';
 import 'providers/sync_state.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'screens/registration/learner_registration_screen.dart';
+import 'screens/registration/teacher_registration_screen.dart';
+import 'screens/registration/parent_registration_screen.dart';
+import 'screens/registration/admin_registration_screen.dart';
+import 'screens/login/login_screen.dart';
+import 'screens/profile/profile_screen.dart';
+import 'screens/admin/admin_screen.dart'; // Added for admin screen
 
 Future<void> requestPermissions() async {
   await [
@@ -86,65 +92,36 @@ class MyApp extends StatelessWidget {
           color: Color(0xFF1E7C8D), // Replace with accent color
         ),
       ),
-      initialRoute: '/',
+      initialRoute: '/login', // Start at login
       routes: {
-        '/': (context) => const HomeScreen(),
-        '/teacher_timetable': (context) =>
-            TeacherTimetableScreen(teacherId: 'teacher_1'),
-        '/learner_timetable': (context) =>
-            LearnerTimetableScreen(learnerId: 'learner_1'),
-        '/teacher_canvas': (context) =>
-            TeacherCanvasScreen(teacherId: 'teacher_1'),
-        '/learner_canvas': (context) =>
-            LearnerCanvasScreen(learnerId: 'learner_1'),
+        '/login': (context) => LoginScreen(),
+        '/learner_registration': (context) => LearnerRegistrationScreen(),
+        '/teacher_registration': (context) => TeacherRegistrationScreen(),
+        '/parent_registration': (context) => ParentRegistrationScreen(
+            learnerId: ModalRoute.of(context)!.settings.arguments as String),
+        '/admin_registration': (context) => AdminRegistrationScreen(),
+        '/timetable': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments
+              as Map<String, dynamic>;
+          return TimetableScreen();
+        },
+        '/profile': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments
+              as Map<String, dynamic>;
+          return ProfileScreen(userId: args['userId']);
+        },
+        '/admin': (context) => AdminScreen(), // Added admin route
+        '/teacher_canvas': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments
+              as Map<String, dynamic>?;
+          return TeacherCanvasScreen(teacherId: args?['userId'] ?? 'teacher_1');
+        },
+        '/learner_canvas': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments
+              as Map<String, dynamic>?;
+          return LearnerCanvasScreen(learnerId: args?['userId'] ?? 'learner_1');
+        },
       },
-    );
-  }
-}
-
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    final backgroundSyncService = Provider.of<BackgroundSyncService>(context);
-
-    // Start background sync for the learner
-    backgroundSyncService.startBackgroundSync('learner_1', context);
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('schoollms')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed('/teacher_timetable');
-              },
-              child: const Text('Teacher Timetable'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed('/learner_timetable');
-              },
-              child: const Text('Learner Timetable'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed('/teacher_canvas');
-              },
-              child: const Text('Teacher Canvas'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed('/learner_canvas');
-              },
-              child: const Text('Learner Canvas'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

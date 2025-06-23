@@ -1,10 +1,15 @@
 import 'dart:convert';
+import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
+import 'package:schoollms/models/user.dart';
 import 'package:schoollms/models/teacher.dart';
 import 'package:schoollms/models/learner.dart';
+import 'package:schoollms/models/teacher.model.dart';
+import 'package:schoollms/models/learner.model.dart';
 import 'package:schoollms/models/class.dart';
+import 'package:schoollms/models/class.model.dart';
 import 'package:schoollms/models/timetable.dart';
 import 'package:schoollms/models/timetable_slot.dart';
 import 'package:schoollms/models/timetable_slot_association.dart';
@@ -19,7 +24,7 @@ import 'package:schoollms/widgets/canvas_widget.dart';
 class DatabaseService {
   Database? _db;
   final _uuid = const Uuid(); // Changed to const for performance
-  static const int _baseVersion = 5; // Updated to current base version
+  static const int _baseVersion = 7; // Updated to current base version
 
   Future<void> init() async {
     print("Starting database initialization at ${DateTime.now()} SAST");
@@ -120,6 +125,12 @@ class DatabaseService {
     await Answer.createTable(db);
     print("Creating Assessment table");
     await Assessment.createTable(db);
+    print("Creating LearnerData table");
+    await LearnerData.createTable(db);
+    print("Creating TeacherData table");
+    await TeacherData.createTable(db);
+    print("Creating User table");
+    await User.createTable(db);
     print("Creating Assets table");
     await db.execute('''
     CREATE TABLE assets (
@@ -533,6 +544,150 @@ class DatabaseService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getAllTimetableSlots() async {
+    try {
+      print("Fetching all timetable slots");
+      final maps = await _db!.rawQuery('''
+        SELECT ts.id AS slot_id, tsa.timetableId, ts.classId, ts.timeSlot, ts.learnerIds,
+               c.subject, c.grade
+        FROM timetables t
+        JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
+        JOIN timetable_slots ts ON tsa.slotId = ts.id
+        JOIN classes c ON ts.classId = c.id
+        WHERE t.userRole IN ('teacher', 'admin')
+        ORDER BY ts.timeSlot
+      ''');
+      print("All timetable slots query result: $maps");
+      return maps;
+    } catch (e) {
+      print("Error fetching all timetable slots: $e");
+      throw Exception('Failed to fetch all timetable slots: $e');
+    }
+  }
+
+  Future<void> insertLearnerData(LearnerData learner) async =>
+      await _db!.insert('learnerdata', learner.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<void> insertTeacherData(TeacherData teacher) async =>
+      await _db!.insert('teacherdata', teacher.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<void> insertUser(User user) async =>
+      await _db!.insert('users', user.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<TeacherData?> getTeacherDataByIdFromCitizenship(
+      String country, String citizenshipId) async {
+    try {
+      final maps = await _db!.query(
+        'teacherdata',
+        where: 'country = ? AND citizenshipId = ?',
+        whereArgs: [country, citizenshipId],
+      );
+      if (maps.isEmpty) return null;
+      print("Retrieved teacher data: ${maps.first}"); // Debug log
+      return TeacherData.fromMap(maps.first);
+    } catch (e) {
+      print("Error fetching teacher data by citizenship: $e");
+      return null;
+    }
+  }
+
+  Future<LearnerData?> getLearnerDataByIdFromCitizenship(
+      String country, String citizenshipId) async {
+    try {
+      final maps = await _db!.query(
+        'learnerdata',
+        where: 'country = ? AND citizenshipId = ?',
+        whereArgs: [country, citizenshipId],
+      );
+      if (maps.isEmpty) return null;
+      return LearnerData.fromMap(maps.first);
+    } catch (e) {
+      print("Error fetching learner data by citizenship: $e");
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getUserByCitizenship(
+      String country, String citizenshipId) async {
+    try {
+      final tables = [
+        'learnerdata',
+        'teacherdata',
+        'users'
+      ]; // Assume 'users' for parent/admin
+      for (var table in tables) {
+        final maps = await _db!.query(
+          table,
+          where: 'country = ? AND citizenshipId = ?',
+          whereArgs: [country, citizenshipId],
+        );
+        if (maps.isNotEmpty) return maps.first;
+      }
+      return null;
+    } catch (e) {
+      print("Error fetching user by citizenship: $e");
+      return null;
+    }
+  }
+
+  Future<void> syncDataWithTeacher(String teacherCountry,
+      String teacherCitizenshipId, BuildContext context) async {
+    try {
+      // Placeholder for sync logic
+      final teachers = await _db!.query(
+        'teacherdata',
+        where: 'country = ? AND citizenshipId = ?',
+        whereArgs: [teacherCountry, teacherCitizenshipId],
+      );
+      if (teachers.isNotEmpty) {
+        final teacherId = teachers.first['id'] as String;
+        final learners = await _db!.query(
+          'learnerdata',
+          where: 'country = ?', // Match teacher's country for now
+          whereArgs: [teacherCountry],
+        );
+        // Simulate sync by logging or preparing data
+        print(
+            "Synced data for teacher $teacherId: ${learners.length} learners");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Data synced with teacher credentials')),
+        );
+      } else {
+        print("No teacher found with given credentials");
+      }
+    } catch (e) {
+      print("Sync error: $e");
+    }
+  }
+
+  Future<Map<String, dynamic>?> getUserById(String id) async =>
+      (await _db!.query('users', where: 'id = ?', whereArgs: [id])).firstOrNull;
+
+  Future<List<Map<String, dynamic>>> getAllUsers() async =>
+      await _db!.query('users');
+
+  Future<LearnerData?> getLearnerDataById(String id) async {
+    try {
+      final maps = await _db!.query(
+        'learnerdata',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (maps.isEmpty) return null;
+      return LearnerData.fromMap(maps.first);
+    } catch (e) {
+      print("Error fetching learner data by ID: $e");
+      return null;
+    }
+  }
+
+  Future<void> updateLearnerData(LearnerData learner) async =>
+      await _db!.update('learnerdata', learner.toMap(),
+          where: 'id = ?', whereArgs: [learner.id]);
+
   Future<void> insertLearner(Learner learner) async {
     try {
       await _db!.transaction((txn) async {
@@ -564,6 +719,66 @@ class DatabaseService {
           .toList();
     } catch (e) {
       throw Exception('Failed to fetch learners: $e');
+    }
+  }
+
+  Future<void> insertClassData(ClassData classData) async {
+    try {
+      await _db!.insert('classdata', classData.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    } catch (e) {
+      print('Error inserting class data: $e');
+      throw e;
+    }
+  }
+
+  Future<ClassData> getClassDataById(String id) async {
+    try {
+      final maps = await _db!.query(
+        'classdata',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (maps.isNotEmpty) {
+        return ClassData.fromMap(maps.first);
+      }
+      throw Exception('ClassData not found');
+    } catch (e) {
+      print('Error fetching class data by ID: $e');
+      throw e;
+    }
+  }
+
+  Future<List<ClassData>> getTeacherClassDataByTeacherId(
+      String teacherId) async {
+    try {
+      final maps = await _db!.query(
+        'classdata',
+        where: 'teacherId = ?',
+        whereArgs: [teacherId],
+      );
+      return maps.map((map) => ClassData.fromMap(map)).toList();
+    } catch (e) {
+      print('Error fetching teacher class data: $e');
+      return [];
+    }
+  }
+
+  // Method to update learnerIds when assigning learners to a class
+  Future<void> updateClassLearnerIds(
+      String classId, List<String> learnerIds) async {
+    try {
+      final classData = await getClassDataById(classId);
+      final updatedClass = classData.copyWith(learnerIds: learnerIds);
+      await _db!.update(
+        'classdata',
+        updatedClass.toMap(),
+        where: 'id = ?',
+        whereArgs: [classId],
+      );
+    } catch (e) {
+      print('Error updating class learner IDs: $e');
+      throw e;
     }
   }
 
