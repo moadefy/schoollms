@@ -38,7 +38,7 @@ class TimetableSlot {
         classId TEXT,
         timeSlot TEXT,
         learnerIds TEXT,
-        FOREIGN KEY (classId) REFERENCES classes(id) ON DELETE SET NULL
+        FOREIGN KEY (classId) REFERENCES classdata(id) ON DELETE SET NULL
       )
     ''');
   }

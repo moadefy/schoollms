@@ -39,18 +39,35 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
                 _formKey.currentState!.save();
                 final parentId = Uuid().v4();
                 final parent = User(
-                    id: parentId,
-                    country: country,
-                    citizenshipId: citizenshipId,
-                    name: '',
-                    surname: '');
-                await db.insertUser(parent); // Assume insertUser for parents
-                // Link parent to learner (e.g., update learner's parentDetails)
-                final learner = await db.getLearnerDataById(widget.learnerId);
-                if (learner != null) {
-                  await db.updateLearnerData(learner.copyWith(id: parentId));
+                  id: parentId,
+                  country: country,
+                  citizenshipId: citizenshipId,
+                  name: '',
+                  surname: '',
+                  email: '', // Placeholder
+                  contactNumber: '', // Placeholder
+                  role: 'parent', // Set role to 'parent'
+                  roleData: {
+                    'learnerId': widget.learnerId, // Link to associated learner
+                  }, // Populate roleData with learnerId
+                );
+                try {
+                  await db.insertUserData(parent); // Updated to insertUserData
+                  // Update learner to reference parent (if needed)
+                  final learner = await db.getUserDataById(widget
+                      .learnerId); // Assuming getUserDataById for consistency
+                  if (learner != null) {
+                    await db.updateUserData(learner.copyWith(roleData: {
+                      ...learner.roleData,
+                      'parentId': parentId,
+                    })); // Update learner's roleData with parentId
+                  }
+                  Navigator.pushReplacementNamed(context, '/login');
+                } catch (e) {
+                  if (mounted)
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error registering: $e')));
                 }
-                Navigator.pushReplacementNamed(context, '/login');
               },
               child: Text('Register'),
             ),

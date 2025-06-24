@@ -4,11 +4,6 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
 import 'package:schoollms/models/user.dart';
-import 'package:schoollms/models/teacher.dart';
-import 'package:schoollms/models/learner.dart';
-import 'package:schoollms/models/teacher.model.dart';
-import 'package:schoollms/models/learner.model.dart';
-import 'package:schoollms/models/class.dart';
 import 'package:schoollms/models/class.model.dart';
 import 'package:schoollms/models/timetable.dart';
 import 'package:schoollms/models/timetable_slot.dart';
@@ -24,7 +19,7 @@ import 'package:schoollms/widgets/canvas_widget.dart';
 class DatabaseService {
   Database? _db;
   final _uuid = const Uuid(); // Changed to const for performance
-  static const int _baseVersion = 7; // Updated to current base version
+  static const int _baseVersion = 9; // Updated to reflect new schema
 
   Future<void> init() async {
     print("Starting database initialization at ${DateTime.now()} SAST");
@@ -86,17 +81,56 @@ class DatabaseService {
       }
       // Migration from version 2 to 3
       if (oldVersion < 3) {
-        await db.execute('ALTER TABLE teachers ADD COLUMN timetableId TEXT');
-        await db.execute('ALTER TABLE learners ADD COLUMN timetableId TEXT');
-        print("Added timetableId to teachers and learners (v3)");
+        await db.execute('ALTER TABLE classes RENAME TO classdata');
+        print("Renamed classes to classdata (v3)");
       }
-      // Migration from version 3 to 4 (handle potential duplicate IDs or schema adjustments)
+      // Migration from version 3 to 4
       if (oldVersion < 4) {
-        // Optional: Add checks or adjustments for existing data if needed
-        print(
-            "Upgrading to version 4 - No schema changes, ensuring unique IDs");
+        await db.execute('DROP TABLE IF EXISTS teachers');
+        await db.execute('DROP TABLE IF EXISTS learners');
+        await db.execute('DROP TABLE IF EXISTS teacherdata');
+        await db.execute('DROP TABLE IF EXISTS learnerdata');
+        print("Dropped redundant tables (v4)");
       }
-      // Update user_version to reflect the new version
+      // Migration from version 4 to 5
+      if (oldVersion < 5) {
+        await db
+            .execute('ALTER TABLE timetable_slots ADD COLUMN learnerIds TEXT');
+        print("Added learnerIds to timetable_slots (v5)");
+      }
+      // Migration from version 5 to 6
+      if (oldVersion < 6) {
+        await db.execute(
+            'ALTER TABLE timetable_slot_association DROP COLUMN userId'); // Temporary drop
+        await db.execute(
+            'ALTER TABLE timetable_slot_association ADD COLUMN userId TEXT');
+        await db.execute(
+            'ALTER TABLE timetable_slot_association ADD CONSTRAINT fk_user FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE');
+        print("Updated timetable_slot_association for users table (v6)");
+      }
+      // Migration from version 6 to 7
+      if (oldVersion < 7) {
+        await db.execute(
+            'ALTER TABLE users ADD COLUMN roleData TEXT'); // Add roleData column
+        print("Added roleData to users table (v7)");
+      }
+      // Migration from version 7 to 8
+      if (oldVersion < 8) {
+        await db.execute(
+            'ALTER TABLE timetable_slot_association DROP CONSTRAINT fk_user'); // Recreate constraint
+        await db.execute(
+            'ALTER TABLE timetable_slot_association ADD CONSTRAINT fk_user FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE');
+        print(
+            "Recreated fk_user constraint in timetable_slot_association (v8)");
+      }
+      // Migration from version 8 to 9
+      if (oldVersion < 9) {
+        await db.execute(
+            'ALTER TABLE analytics ADD COLUMN timetableId TEXT'); // Add timetableId
+        await db.execute(
+            'ALTER TABLE analytics ADD COLUMN slotId TEXT'); // Add slotId
+        print("Added timetableId and slotId to analytics (v9)");
+      }
       await db.execute('PRAGMA user_version = $newVersion');
     } catch (e) {
       print("Migration error: $e");
@@ -105,12 +139,10 @@ class DatabaseService {
   }
 
   Future<void> _createTables(Database db) async {
-    print("Creating Teacher table");
-    await Teacher.createTable(db);
-    print("Creating Learner table");
-    await Learner.createTable(db);
-    print("Creating Class table");
-    await Class.createTable(db);
+    print("Creating User table");
+    await User.createTable(db);
+    print("Creating ClassData table");
+    await ClassData.createTable(db);
     print("Creating Timetable table");
     await Timetable.createTable(db);
     print("Creating TimetableSlot table");
@@ -125,12 +157,6 @@ class DatabaseService {
     await Answer.createTable(db);
     print("Creating Assessment table");
     await Assessment.createTable(db);
-    print("Creating LearnerData table");
-    await LearnerData.createTable(db);
-    print("Creating TeacherData table");
-    await TeacherData.createTable(db);
-    print("Creating User table");
-    await User.createTable(db);
     print("Creating Assets table");
     await db.execute('''
     CREATE TABLE assets (
@@ -154,7 +180,9 @@ class DatabaseService {
       timeSpentSeconds INTEGER,
       submissionStatus TEXT,
       deviceId TEXT,
-      timestamp INTEGER
+      timestamp INTEGER,
+      timetableId TEXT, -- Added
+      slotId TEXT -- Added
     )
   ''');
     print("Creating SyncPending table");
@@ -191,87 +219,154 @@ class DatabaseService {
 
   Future<void> _seedData(Database db) async {
     print("Seeding data with database: $db");
-    final teachersCount = Sqflite.firstIntValue(
-        await db.query('teachers', columns: ['COUNT(*)']));
-    if (teachersCount == 0) {
-      print("Seeding Teachers");
+    final usersCount =
+        Sqflite.firstIntValue(await db.query('users', columns: ['COUNT(*)']));
+    if (usersCount == 0) {
+      print("Seeding Users");
       await db.insert(
-          'teachers',
-          Teacher(id: 'teacher_1', name: 'Ms. Smith', timetableId: null)
-              .toMap());
+          'users',
+          User(
+            id: 'user_1',
+            country: 'ZA',
+            citizenshipId: '123456789',
+            name: 'Ms. Smith',
+            surname: '',
+            role: 'teacher',
+            roleData: {
+              'qualifiedSubjects': {
+                '10': ['Math', 'Science']
+              }
+            },
+          ).toMap());
       await db.insert(
-          'teachers',
-          Teacher(id: 'teacher_2', name: 'Mr. Jones', timetableId: null)
-              .toMap());
+          'users',
+          User(
+            id: 'user_2',
+            country: 'ZA',
+            citizenshipId: '987654321',
+            name: 'Mr. Jones',
+            surname: '',
+            role: 'teacher',
+            roleData: {
+              'qualifiedSubjects': {
+                '11': ['English']
+              }
+            },
+          ).toMap());
+      await db.insert(
+          'users',
+          User(
+            id: 'user_3',
+            country: 'ZA',
+            citizenshipId: '111111111',
+            name: 'Alice',
+            surname: '',
+            role: 'learner',
+            roleData: {
+              'grade': '10',
+              'subjects': ['Math', 'Science']
+            },
+          ).toMap());
+      await db.insert(
+          'users',
+          User(
+            id: 'user_4',
+            country: 'ZA',
+            citizenshipId: '222222222',
+            name: 'Bob',
+            surname: '',
+            role: 'learner',
+            roleData: {
+              'grade': '10',
+              'subjects': ['Math', 'Science']
+            },
+          ).toMap());
+      await db.insert(
+          'users',
+          User(
+            id: 'user_5',
+            country: 'ZA',
+            citizenshipId: '333333333',
+            name: 'Charlie',
+            surname: '',
+            role: 'learner',
+            roleData: {
+              'grade': '11',
+              'subjects': ['English']
+            },
+          ).toMap());
+      await db.insert(
+          'users',
+          User(
+            id: 'user_6',
+            country: 'ZA',
+            citizenshipId: '444444444',
+            name: 'David',
+            surname: '',
+            role: 'learner',
+            roleData: {
+              'grade': '11',
+              'subjects': ['English']
+            },
+          ).toMap());
+      await db.insert(
+          'users',
+          User(
+            id: 'user_7',
+            country: 'ZA',
+            citizenshipId: '555555555',
+            name: 'Eve',
+            surname: '',
+            role: 'learner',
+            roleData: {
+              'grade': '10',
+              'subjects': ['Math', 'Science']
+            },
+          ).toMap());
 
-      print("Seeding Learners");
+      print("Seeding ClassData");
       await db.insert(
-          'learners',
-          Learner(
-                  id: 'learner_1',
-                  name: 'Alice',
-                  grade: '10',
-                  timetableId: null)
-              .toMap());
+          'classdata',
+          ClassData(
+            id: 'class_1',
+            teacherId: 'user_1',
+            subject: 'Math',
+            grade: '10',
+            title: 'Math 10 Class 1',
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+            learnerIds: ['user_3', 'user_4', 'user_7'], // Added learnerIds
+          ).toMap());
       await db.insert(
-          'learners',
-          Learner(id: 'learner_2', name: 'Bob', grade: '10', timetableId: null)
-              .toMap());
+          'classdata',
+          ClassData(
+            id: 'class_2',
+            teacherId: 'user_1',
+            subject: 'Science',
+            grade: '10',
+            title: 'Science 10 Class 1',
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+            learnerIds: ['user_3', 'user_4', 'user_7'], // Added learnerIds
+          ).toMap());
       await db.insert(
-          'learners',
-          Learner(
-                  id: 'learner_3',
-                  name: 'Charlie',
-                  grade: '11',
-                  timetableId: null)
-              .toMap());
-      await db.insert(
-          'learners',
-          Learner(
-                  id: 'learner_4',
-                  name: 'David',
-                  grade: '11',
-                  timetableId: null)
-              .toMap());
-      await db.insert(
-          'learners',
-          Learner(id: 'learner_5', name: 'Eve', grade: '10', timetableId: null)
-              .toMap());
-
-      print("Seeding Classes");
-      await db.insert(
-          'classes',
-          Class(
-                  id: 'class_1',
-                  teacherId: 'teacher_1',
-                  subject: 'Math',
-                  grade: '10')
-              .toMap());
-      await db.insert(
-          'classes',
-          Class(
-                  id: 'class_2',
-                  teacherId: 'teacher_1',
-                  subject: 'Science',
-                  grade: '10')
-              .toMap());
-      await db.insert(
-          'classes',
-          Class(
-                  id: 'class_3',
-                  teacherId: 'teacher_2',
-                  subject: 'English',
-                  grade: '11')
-              .toMap());
+          'classdata',
+          ClassData(
+            id: 'class_3',
+            teacherId: 'user_2',
+            subject: 'English',
+            grade: '11',
+            title: 'English 11 Class 1',
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+            learnerIds: ['user_5', 'user_6'], // Added learnerIds
+          ).toMap());
 
       print("Seeding Timetables and TimetableSlots");
-      // Teacher 1 Timetable and Slots
-      final teacher1Timetable = Timetable(
-          id: _uuid.v4(),
-          teacherId: 'teacher_1',
-          userId: 'teacher_1',
-          userRole: 'teacher');
       final seedDate = DateTime.now().toIso8601String().split('T')[0];
+      final teacher1Timetable = Timetable(
+        id: _uuid.v4(),
+        teacherId: 'user_1',
+        userId: 'user_1',
+        userRole: 'teacher',
+      );
       await insertTimetable(
           teacher1Timetable,
           [
@@ -279,29 +374,29 @@ class DatabaseService {
               'id': _uuid.v4(),
               'classId': 'class_1',
               'timeSlot': '$seedDate 09:00-10:00',
-              'learnerIds': ['learner_1', 'learner_2', 'learner_5'],
+              'learnerIds': ['user_3', 'user_4', 'user_7'],
             },
             {
               'id': _uuid.v4(),
               'classId': 'class_1',
               'timeSlot': '$seedDate 10:00-11:00',
-              'learnerIds': ['learner_1', 'learner_2', 'learner_5'],
+              'learnerIds': ['user_3', 'user_4', 'user_7'],
             },
             {
               'id': _uuid.v4(),
               'classId': 'class_2',
               'timeSlot': '$seedDate 11:00-12:00',
-              'learnerIds': ['learner_1', 'learner_2', 'learner_5'],
+              'learnerIds': ['user_3', 'user_4', 'user_7'],
             },
           ],
           db);
 
-      // Teacher 2 Timetable and Slots
       final teacher2Timetable = Timetable(
-          id: _uuid.v4(),
-          teacherId: 'teacher_2',
-          userId: 'teacher_2',
-          userRole: 'teacher');
+        id: _uuid.v4(),
+        teacherId: 'user_2',
+        userId: 'user_2',
+        userRole: 'teacher',
+      );
       await insertTimetable(
           teacher2Timetable,
           [
@@ -309,28 +404,28 @@ class DatabaseService {
               'id': _uuid.v4(),
               'classId': 'class_3',
               'timeSlot': '$seedDate 13:00-14:00',
-              'learnerIds': ['learner_3', 'learner_4'],
+              'learnerIds': ['user_5', 'user_6'],
             },
             {
               'id': _uuid.v4(),
               'classId': 'class_3',
               'timeSlot': '$seedDate 14:00-15:00',
-              'learnerIds': ['learner_3', 'learner_4'],
+              'learnerIds': ['user_5', 'user_6'],
             },
           ],
           db);
 
       print("Registering Learner Devices");
       await _registerLearnerDevice(
-          db, 'learner_1', 'device_1', 'teacher_1', 'class_1');
+          db, 'user_3', 'device_1', 'user_1', 'class_1');
       await _registerLearnerDevice(
-          db, 'learner_2', 'device_2', 'teacher_1', 'class_1');
+          db, 'user_4', 'device_2', 'user_1', 'class_1');
       await _registerLearnerDevice(
-          db, 'learner_3', 'device_3', 'teacher_2', 'class_3');
+          db, 'user_5', 'device_3', 'user_2', 'class_3');
       await _registerLearnerDevice(
-          db, 'learner_4', 'device_4', 'teacher_2', 'class_3');
+          db, 'user_6', 'device_4', 'user_2', 'class_3');
       await _registerLearnerDevice(
-          db, 'learner_5', 'device_5', 'teacher_1', 'class_2');
+          db, 'user_7', 'device_5', 'user_1', 'class_2');
     }
   }
 
@@ -478,7 +573,7 @@ class DatabaseService {
         final classId = newSlot['classId'] as String?;
         if (classId == null) return 'Invalid class ID: null value';
         final classData = await database
-            .query('classes', where: 'id = ?', whereArgs: [classId]);
+            .query('classdata', where: 'id = ?', whereArgs: [classId]);
         print("Class data for $classId: $classData");
         if (classData.isEmpty) return 'Invalid class ID';
 
@@ -501,11 +596,12 @@ class DatabaseService {
             classData.isNotEmpty ? classData[0]['grade'] as String? : null;
         if (classGrade == null) return 'Class grade is null';
         for (final learnerId in learnerIds) {
-          final learnerData = await database
-              .query('learners', where: 'id = ?', whereArgs: [learnerId]);
-          print("Learner data for $learnerId: $learnerData");
-          if (learnerData.isEmpty ||
-              (learnerData[0]['grade'] as String?) != classGrade) {
+          final user = await database.query('users',
+              where: 'id = ?', whereArgs: [learnerId], columns: ['roleData']);
+          print("User data for $learnerId: $user");
+          if (user.isEmpty ||
+              (jsonDecode(user[0]['roleData'] as String)['grade'] as String?) !=
+                  classGrade) {
             return 'Learner $learnerId does not match class grade $classGrade';
           }
           final learnerSlots = await database.query('timetable_slots',
@@ -527,129 +623,72 @@ class DatabaseService {
     }
   }
 
-  Future<void> insertTeacher(Teacher teacher) async {
+  Future<void> insertUserData(User user) async {
     try {
-      await _db!.transaction((txn) async {
-        await txn.insert('teachers', teacher.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace);
-        if (teacher.timetableId != null) {
-          await txn.update(
-              'timetables', {'userId': teacher.id, 'userRole': 'teacher'},
-              where: 'id = ?', whereArgs: [teacher.timetableId]);
-        }
-        await _queueSync(txn, 'teachers', 'insert', teacher.toMap());
-      });
-    } catch (e) {
-      throw Exception('Failed to insert teacher: $e');
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> getAllTimetableSlots() async {
-    try {
-      print("Fetching all timetable slots");
-      final maps = await _db!.rawQuery('''
-        SELECT ts.id AS slot_id, tsa.timetableId, ts.classId, ts.timeSlot, ts.learnerIds,
-               c.subject, c.grade
-        FROM timetables t
-        JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
-        JOIN timetable_slots ts ON tsa.slotId = ts.id
-        JOIN classes c ON ts.classId = c.id
-        WHERE t.userRole IN ('teacher', 'admin')
-        ORDER BY ts.timeSlot
-      ''');
-      print("All timetable slots query result: $maps");
-      return maps;
-    } catch (e) {
-      print("Error fetching all timetable slots: $e");
-      throw Exception('Failed to fetch all timetable slots: $e');
-    }
-  }
-
-  Future<void> insertLearnerData(LearnerData learner) async =>
-      await _db!.insert('learnerdata', learner.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace);
-
-  Future<void> insertTeacherData(TeacherData teacher) async =>
-      await _db!.insert('teacherdata', teacher.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace);
-
-  Future<void> insertUser(User user) async =>
       await _db!.insert('users', user.toMap(),
           conflictAlgorithm: ConflictAlgorithm.replace);
+      await _queueSync(_db!, 'users', 'insert', user.toMap());
+    } catch (e) {
+      throw Exception('Failed to insert user: $e');
+    }
+  }
 
-  Future<TeacherData?> getTeacherDataByIdFromCitizenship(
-      String country, String citizenshipId) async {
+  Future<User?> getUserDataById(String id) async {
     try {
       final maps = await _db!.query(
-        'teacherdata',
-        where: 'country = ? AND citizenshipId = ?',
-        whereArgs: [country, citizenshipId],
+        'users',
+        where: 'id = ?',
+        whereArgs: [id],
       );
       if (maps.isEmpty) return null;
-      print("Retrieved teacher data: ${maps.first}"); // Debug log
-      return TeacherData.fromMap(maps.first);
+      return User.fromMap(maps.first);
     } catch (e) {
-      print("Error fetching teacher data by citizenship: $e");
+      print("Error fetching user data by ID: $e");
       return null;
     }
   }
 
-  Future<LearnerData?> getLearnerDataByIdFromCitizenship(
-      String country, String citizenshipId) async {
+  Future<void> updateUserData(User user) async {
     try {
-      final maps = await _db!.query(
-        'learnerdata',
-        where: 'country = ? AND citizenshipId = ?',
-        whereArgs: [country, citizenshipId],
-      );
-      if (maps.isEmpty) return null;
-      return LearnerData.fromMap(maps.first);
+      await _db!
+          .update('users', user.toMap(), where: 'id = ?', whereArgs: [user.id]);
+      await _queueSync(_db!, 'users', 'update', user.toMap());
     } catch (e) {
-      print("Error fetching learner data by citizenship: $e");
-      return null;
+      print('Error updating user data: $e');
+      throw e;
     }
   }
 
   Future<Map<String, dynamic>?> getUserByCitizenship(
       String country, String citizenshipId) async {
     try {
-      final tables = [
-        'learnerdata',
-        'teacherdata',
-        'users'
-      ]; // Assume 'users' for parent/admin
-      for (var table in tables) {
-        final maps = await _db!.query(
-          table,
-          where: 'country = ? AND citizenshipId = ?',
-          whereArgs: [country, citizenshipId],
-        );
-        if (maps.isNotEmpty) return maps.first;
-      }
-      return null;
+      final maps = await _db!.query(
+        'users',
+        where: 'country = ? AND citizenshipId = ?',
+        whereArgs: [country, citizenshipId],
+      );
+      return maps.isNotEmpty ? maps.first : null;
     } catch (e) {
       print("Error fetching user by citizenship: $e");
       return null;
     }
   }
 
+  Future<List<Map<String, dynamic>>> getAllUsers() async =>
+      await _db!.query('users');
+
   Future<void> syncDataWithTeacher(String teacherCountry,
       String teacherCitizenshipId, BuildContext context) async {
     try {
-      // Placeholder for sync logic
-      final teachers = await _db!.query(
-        'teacherdata',
-        where: 'country = ? AND citizenshipId = ?',
-        whereArgs: [teacherCountry, teacherCitizenshipId],
-      );
-      if (teachers.isNotEmpty) {
-        final teacherId = teachers.first['id'] as String;
+      final user =
+          await getUserByCitizenship(teacherCountry, teacherCitizenshipId);
+      if (user != null && user['role'] == 'teacher') {
+        final teacherId = user['id'] as String;
         final learners = await _db!.query(
-          'learnerdata',
-          where: 'country = ?', // Match teacher's country for now
-          whereArgs: [teacherCountry],
+          'users',
+          where: 'country = ? AND role = ?',
+          whereArgs: [teacherCountry, 'learner'],
         );
-        // Simulate sync by logging or preparing data
         print(
             "Synced data for teacher $teacherId: ${learners.length} learners");
         ScaffoldMessenger.of(context).showSnackBar(
@@ -663,62 +702,67 @@ class DatabaseService {
     }
   }
 
-  Future<Map<String, dynamic>?> getUserById(String id) async =>
-      (await _db!.query('users', where: 'id = ?', whereArgs: [id])).firstOrNull;
-
-  Future<List<Map<String, dynamic>>> getAllUsers() async =>
-      await _db!.query('users');
-
-  Future<LearnerData?> getLearnerDataById(String id) async {
+  Future<List<Map<String, dynamic>>> getAllTimetableSlots() async {
     try {
-      final maps = await _db!.query(
-        'learnerdata',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-      if (maps.isEmpty) return null;
-      return LearnerData.fromMap(maps.first);
+      print("Fetching all timetable slots");
+      final maps = await _db!.rawQuery('''
+        SELECT ts.id AS slot_id, tsa.timetableId, ts.classId, ts.timeSlot, ts.learnerIds,
+               c.subject, c.grade
+        FROM timetables t
+        JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
+        JOIN timetable_slots ts ON tsa.slotId = ts.id
+        JOIN classdata c ON ts.classId = c.id
+        WHERE t.userRole IN ('teacher', 'admin')
+        ORDER BY ts.timeSlot
+      ''');
+      print("All timetable slots query result: $maps");
+      return maps;
     } catch (e) {
-      print("Error fetching learner data by ID: $e");
-      return null;
+      print("Error fetching all timetable slots: $e");
+      throw Exception('Failed to fetch all timetable slots: $e');
     }
   }
 
-  Future<void> updateLearnerData(LearnerData learner) async =>
-      await _db!.update('learnerdata', learner.toMap(),
-          where: 'id = ?', whereArgs: [learner.id]);
-
-  Future<void> insertLearner(Learner learner) async {
+  Future<List<Map<String, dynamic>>> getTeacherTimetableSlots(
+      String teacherId) async {
     try {
-      await _db!.transaction((txn) async {
-        await txn.insert('learners', learner.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace);
-        if (learner.timetableId != null) {
-          await txn.update(
-              'timetables', {'userId': learner.id, 'userRole': 'learner'},
-              where: 'id = ?', whereArgs: [learner.timetableId]);
-        }
-        await _queueSync(txn, 'learners', 'insert', learner.toMap());
-      });
+      print("Fetching timetable slots for teacherId: $teacherId");
+      final maps = await _db!.rawQuery('''
+      SELECT DISTINCT ts.id AS slot_id, tsa.timetableId, ts.classId, ts.timeSlot, ts.learnerIds,
+             c.subject, c.grade
+      FROM timetables t
+      JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
+      JOIN timetable_slots ts ON tsa.slotId = ts.id
+      JOIN classdata c ON ts.classId = c.id
+      WHERE t.teacherId = ? AND t.userRole = 'teacher'
+      ORDER BY ts.timeSlot
+    ''', [teacherId]);
+      print("Teacher timetable slots query result: $maps");
+      return maps;
     } catch (e) {
-      throw Exception('Failed to insert learner: $e');
+      print("Error fetching teacher timetable slots: $e");
+      throw Exception('Failed to fetch teacher timetable slots: $e');
     }
   }
 
-  Future<List<Learner>> getLearnersByGrade(String grade) async {
+  Future<List<Map<String, dynamic>>> getLearnerTimetableSlots(
+      String learnerId) async {
     try {
-      final maps =
-          await _db!.query('learners', where: 'grade = ?', whereArgs: [grade]);
-      return maps
-          .map((map) => Learner(
-                id: map['id'] as String,
-                name: map['name'] as String,
-                grade: map['grade'] as String,
-                timetableId: map['timetableId'] as String?,
-              ))
-          .toList();
+      print("Fetching timetable slots for learnerId: $learnerId");
+      final maps = await _db!.rawQuery('''
+      SELECT ts.id AS slot_id, ts.classId, ts.timeSlot, ts.learnerIds,
+             c.subject, c.grade
+      FROM learner_timetables lt
+      JOIN timetable_slots ts ON lt.classId = ts.classId AND lt.timeSlot = ts.timeSlot
+      JOIN classdata c ON ts.classId = c.id
+      WHERE lt.learnerId = ?
+      ORDER BY ts.timeSlot
+    ''', [learnerId]);
+      print("Learner timetable slots query result: $maps");
+      return maps;
     } catch (e) {
-      throw Exception('Failed to fetch learners: $e');
+      print("Error fetching learner timetable slots: $e");
+      throw Exception('Failed to fetch learner timetable slots: $e');
     }
   }
 
@@ -764,7 +808,6 @@ class DatabaseService {
     }
   }
 
-  // Method to update learnerIds when assigning learners to a class
   Future<void> updateClassLearnerIds(
       String classId, List<String> learnerIds) async {
     try {
@@ -779,35 +822,6 @@ class DatabaseService {
     } catch (e) {
       print('Error updating class learner IDs: $e');
       throw e;
-    }
-  }
-
-  Future<void> insertClass(Class cls) async {
-    try {
-      await _db!.transaction((txn) async {
-        await txn.insert('classes', cls.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace);
-        await _queueSync(txn, 'classes', 'insert', cls.toMap());
-      });
-    } catch (e) {
-      throw Exception('Failed to insert class: $e');
-    }
-  }
-
-  Future<List<Class>> getClassesByTeacher(String teacherId) async {
-    try {
-      final maps = await _db!
-          .query('classes', where: 'teacherId = ?', whereArgs: [teacherId]);
-      return maps
-          .map((map) => Class(
-                id: map['id'] as String,
-                teacherId: map['teacherId'] as String,
-                subject: map['subject'] as String,
-                grade: map['grade'] as String,
-              ))
-          .toList();
-    } catch (e) {
-      throw Exception('Failed to fetch classes by teacher: $e');
     }
   }
 
@@ -830,7 +844,7 @@ class DatabaseService {
         timetableData['userId'] = timetable.teacherId;
       }
 
-      // Check for existing timetable for the teacher
+      // Check for existing timetable for the user
       final existingTimetable = await database.query('timetables',
           where: 'userId = ? AND userRole = ?',
           whereArgs: [timetableData['userId'], timetableData['userRole']],
@@ -839,12 +853,6 @@ class DatabaseService {
         timetableData['id'] = existingTimetable.first['id'] as String;
       } else {
         timetableData['id'] = _uuid.v4();
-      }
-
-      // Update teacher's timetableId
-      if (timetableData['userRole'] == 'teacher') {
-        await database.update('teachers', {'timetableId': timetableData['id']},
-            where: 'id = ?', whereArgs: [timetable.teacherId]);
       }
 
       await database.transaction((txn) async {
@@ -878,22 +886,16 @@ class DatabaseService {
           await _queueSync(
               txn, 'timetable_slots', 'insert', timetableSlot.toMap());
           slotIds.add(slotId);
-
-          // Update learners' timetableId
-          for (final learnerId in learnerIds) {
-            await txn.update('learners', {'timetableId': timetableData['id']},
-                where: 'id = ?', whereArgs: [learnerId]);
-          }
         }
 
-        // Associate teacher with slots
+        // Associate user with slots
         if (slotIds.isNotEmpty) {
-          final teacherAssociationId = _uuid.v4();
+          final associationId = _uuid.v4();
           await txn.insert(
               'timetable_slot_association',
               TimetableSlotAssociation(
-                      id: teacherAssociationId,
-                      userId: timetable.teacherId,
+                      id: associationId,
+                      userId: timetableData['userId'],
                       timetableId: timetableData['id'],
                       slotId: slotIds[0])
                   .toMap(),
@@ -903,8 +905,8 @@ class DatabaseService {
               'timetable_slot_association',
               'insert',
               TimetableSlotAssociation(
-                      id: teacherAssociationId,
-                      userId: timetable.teacherId,
+                      id: associationId,
+                      userId: timetableData['userId'],
                       timetableId: timetableData['id'],
                       slotId: slotIds[0])
                   .toMap());
@@ -1057,7 +1059,7 @@ class DatabaseService {
     try {
       await _db!.transaction((txn) async {
         final classData = await txn
-            .query('classes', where: 'id = ?', whereArgs: [question.classId]);
+            .query('classdata', where: 'id = ?', whereArgs: [question.classId]);
         if (classData.isEmpty) throw Exception('Invalid class ID');
         if (question.assessmentId != null) {
           final assessmentData = await txn.query('assessments',
@@ -1106,7 +1108,7 @@ class DatabaseService {
         if (questionData.isEmpty) throw Exception('Invalid question ID');
         final classId = questionData[0]['classId'] as String;
         final classData =
-            await txn.query('classes', where: 'id = ?', whereArgs: [classId]);
+            await txn.query('classdata', where: 'id = ?', whereArgs: [classId]);
         if (classData.isEmpty) throw Exception('Invalid class ID');
         final timetableIds = await txn
             .query('timetables', where: 'classId = ?', whereArgs: [classId]);
@@ -1515,7 +1517,7 @@ class DatabaseService {
   Future<Map<String, dynamic>?> getClassById(String classId) async {
     try {
       final maps =
-          await _db!.query('classes', where: 'id = ?', whereArgs: [classId]);
+          await _db!.query('classdata', where: 'id = ?', whereArgs: [classId]);
       return maps.isNotEmpty ? maps.first : null;
     } catch (e) {
       throw Exception('Failed to fetch class: $e');
@@ -1546,6 +1548,8 @@ class DatabaseService {
             'deviceId': analytics.deviceId,
             'timestamp':
                 analytics.timestamp ?? DateTime.now().millisecondsSinceEpoch,
+            'timetableId': analytics.timetableId, // Added
+            'slotId': analytics.slotId, // Added
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
@@ -1615,46 +1619,25 @@ class DatabaseService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getTeacherTimetableSlots(
-      String teacherId) async {
+  Future<List<User>> getUsersByClassId(String classId) async {
     try {
-      print("Fetching timetable slots for teacherId: $teacherId");
-      final maps = await _db!.rawQuery('''
-      SELECT DISTINCT ts.id AS slot_id, tsa.timetableId, ts.classId, ts.timeSlot, ts.learnerIds,
-             c.subject, c.grade
-      FROM timetables t
-      JOIN timetable_slot_association tsa ON t.id = tsa.timetableId
-      JOIN timetable_slots ts ON tsa.slotId = ts.id
-      JOIN classes c ON ts.classId = c.id
-      WHERE t.teacherId = ? AND t.userRole = 'teacher'
-      ORDER BY ts.timeSlot
-    ''', [teacherId]);
-      print("Teacher timetable slots query result: $maps");
-      return maps;
+      final classData = await getClassDataById(classId);
+      if (classData == null) {
+        return [];
+      }
+      final learnerIds = classData.learnerIds;
+      if (learnerIds == null || learnerIds.isEmpty) {
+        return [];
+      }
+      final maps = await _db!.query(
+        'users',
+        where: 'id IN (${learnerIds.map((_) => '?').join(',')})',
+        whereArgs: learnerIds,
+      );
+      return maps.map((map) => User.fromMap(map)).toList();
     } catch (e) {
-      print("Error fetching teacher timetable slots: $e");
-      throw Exception('Failed to fetch teacher timetable slots: $e');
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> getLearnerTimetableSlots(
-      String learnerId) async {
-    try {
-      print("Fetching timetable slots for learnerId: $learnerId");
-      final maps = await _db!.rawQuery('''
-      SELECT ts.id AS slot_id, ts.classId, ts.timeSlot, ts.learnerIds,
-             c.subject, c.grade
-      FROM learner_timetables lt
-      JOIN timetable_slots ts ON lt.classId = ts.classId AND lt.timeSlot = ts.timeSlot
-      JOIN classes c ON ts.classId = c.id
-      WHERE lt.learnerId = ?
-      ORDER BY ts.timeSlot
-    ''', [learnerId]);
-      print("Learner timetable slots query result: $maps");
-      return maps;
-    } catch (e) {
-      print("Error fetching learner timetable slots: $e");
-      throw Exception('Failed to fetch learner timetable slots: $e');
+      print('Error fetching users by class ID: $e');
+      throw Exception('Failed to fetch users by class ID: $e');
     }
   }
 }

@@ -59,7 +59,7 @@ class _AdminRegistrationScreenState extends State<AdminRegistrationScreen> {
                     surname: surname,
                     email: email,
                     contactNumber: contactNumber);
-                await db.insertUser(admin); // Assume insertUser for admin
+                await db.insertUserData(admin); // Assume insertUser for admin
                 Navigator.pushReplacementNamed(context, '/login');
               },
               child: Text('Register'),

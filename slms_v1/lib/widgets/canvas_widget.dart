@@ -303,7 +303,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
         _currentPdf = null;
         _currentPageIndex = 0;
         final newAsset = CanvasAsset(
-          id: Uuid().v4(),
+          id: const Uuid().v4(),
           type: 'image',
           path: pickedFile.path,
           pageIndex: 0,
@@ -333,7 +333,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
         _currentImage = null;
         _currentPageIndex = 0;
         final newAsset = CanvasAsset(
-          id: Uuid().v4(),
+          id: const Uuid().v4(),
           type: 'pdf',
           path: pickedFile.path!,
           pageIndex: 0,
@@ -399,8 +399,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   Future<void> _saveAssets() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
-    await dbService.saveAssets(
-        widget.learnerId, _assets); // Pass List<CanvasAsset>
+    await dbService.saveAssets(widget.learnerId, _assets);
     await _saveLearnerTimetableData();
     widget.onSave();
     if (widget.onAssetsUpdate != null) {
@@ -482,6 +481,8 @@ class _CanvasWidgetState extends State<CanvasWidget> {
       submissionStatus: action == 'stroke_update' ? 'draft' : 'asset_updated',
       deviceId: _deviceId!,
       timestamp: endTime.millisecondsSinceEpoch,
+      timetableId: widget.timetableId, // Added for traceability
+      slotId: widget.slotId, // Added for traceability
     );
     await dbService.insertAnalytics(analytics);
     _sessionStartTime = endTime; // Reset for next session

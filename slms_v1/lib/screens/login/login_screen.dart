@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:schoollms/services/database_service.dart';
-import 'package:schoollms/models/learner.model.dart' as LearnerModel;
-import 'package:schoollms/models/teacher.model.dart' as TeacherModel;
+import 'package:schoollms/models/user.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -120,35 +119,29 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 20),
                         ElevatedButton(
                           onPressed: () async {
-                            dynamic user;
-                            if (role == 'teacher') {
-                              user = await db.getTeacherDataByIdFromCitizenship(
+                            if (_formKey.currentState!.validate()) {
+                              final user = await db.getUserByCitizenship(
                                   country, citizenshipId);
-                            } else if (role == 'learner') {
-                              user = await db.getLearnerDataByIdFromCitizenship(
-                                  country, citizenshipId);
-                            } else if (role == 'parent' || role == 'admin') {
-                              user = await db.getUserByCitizenship(
-                                  country, citizenshipId);
-                            }
-                            if (user != null &&
-                                ((role == 'teacher' &&
-                                        user is TeacherModel.TeacherData) ||
-                                    (role == 'learner' &&
-                                        user is LearnerModel.LearnerData) ||
-                                    (role == 'parent' || role == 'admin'))) {
-                              Navigator.pushReplacementNamed(
-                                  context, '/timetable',
-                                  arguments: {
-                                    'userId': user is Map<String, dynamic>
-                                        ? user['id']
-                                        : user.id,
-                                    'role': role,
-                                  });
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('Invalid credentials')));
+                              if (user != null) {
+                                final userRole = user['role'] as String;
+                                if (userRole == role) {
+                                  Navigator.pushReplacementNamed(
+                                      context, '/timetable',
+                                      arguments: {
+                                        'userId': user['id'] as String,
+                                        'role': role,
+                                      });
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content: Text(
+                                              'Role does not match credentials')));
+                                }
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                        content: Text('Invalid credentials')));
+                              }
                             }
                           },
                           style: ElevatedButton.styleFrom(
@@ -193,7 +186,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               );
                             } else {
                               Navigator.pushNamed(
-                                  context, '/$role' + '_registration');
+                                  context, '/${role}_registration');
                             }
                           },
                           child: const Text(

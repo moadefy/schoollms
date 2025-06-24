@@ -36,11 +36,10 @@ class TimetableSlotAssociation {
     await db.execute('''
       CREATE TABLE timetable_slot_association (
         id TEXT PRIMARY KEY,
-        userId TEXT,
-        timetableId TEXT,
-        slotId TEXT,
-        FOREIGN KEY (userId) REFERENCES teachers(id) ON DELETE CASCADE,
-        FOREIGN KEY (userId) REFERENCES learners(id) ON DELETE CASCADE,
+        userId TEXT NOT NULL,
+        timetableId TEXT NOT NULL,
+        slotId TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (timetableId) REFERENCES timetables(id) ON DELETE CASCADE,
         FOREIGN KEY (slotId) REFERENCES timetable_slots(id) ON DELETE CASCADE,
         UNIQUE (userId, slotId) -- Ensure no duplicate associations

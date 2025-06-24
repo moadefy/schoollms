@@ -4,13 +4,14 @@ import 'package:uuid/uuid.dart';
 import 'dart:convert';
 import 'package:schoollms/services/database_service.dart';
 import 'package:schoollms/models/timetable.dart';
-import 'package:schoollms/models/class.dart';
+import 'package:schoollms/models/class.model.dart';
 import 'package:schoollms/models/timetable_slot.dart';
 import 'package:schoollms/models/question.dart';
 import 'package:schoollms/models/assessment.dart';
 import 'package:schoollms/models/answer.dart';
 import 'package:schoollms/models/asset.dart';
 import 'package:schoollms/models/analytics.dart';
+import 'package:schoollms/models/user.dart';
 import 'package:schoollms/widgets/canvas_widget.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
@@ -33,7 +34,7 @@ class TeacherCanvasScreen extends StatefulWidget {
 class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   List<Timetable> _timetables = [];
   Timetable? _selectedTimetable;
-  Class? _class;
+  ClassData? _class;
   List<Question> _questions = [];
   List<Assessment> _assessments = [];
   String _filter = '';
@@ -58,8 +59,7 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   @override
   void initState() {
     super.initState();
-    _deviceId =
-        null; // Initialize with null to trigger initialization in didChangeDependencies
+    _deviceId = null; // Initialize with null to trigger initialization
     _timetables = []; // Ensure initial state is empty
   }
 
@@ -177,7 +177,7 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   Future<void> _addQuestion() async {
     final db = Provider.of<DatabaseService>(context, listen: false);
     String canvasData = jsonEncode([]);
-    final questionId = Uuid().v4();
+    final questionId = const Uuid().v4();
     int? pdfPage = null;
     final slots = await db.getTimetableSlotsByTimetableId(
         _effectiveTimetableId ?? _selectedTimetable!.id);
@@ -190,8 +190,8 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
         _deviceId == null ||
         _effectiveSlotId == null) return;
 
-    int? timerSeconds = (await _getAssessmentType(assessmentId) == 'test' ||
-            await _getAssessmentType(assessmentId) == 'exam')
+    final assessmentType = await _getAssessmentType(assessmentId);
+    int? timerSeconds = (assessmentType == 'test' || assessmentType == 'exam')
         ? await _selectTimerDuration(context)
         : null;
     DateTime? closeTime = timerSeconds != null
@@ -200,71 +200,31 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
 
     final question = Question(
       id: questionId,
-      timetableId: _effectiveTimetableId,
       classId: selectedClassId,
-      assessmentId: assessmentId,
       content: canvasData,
       pdfPage: pdfPage,
-      slotId: _effectiveSlotId, // Add slotId
+      slotId: _effectiveSlotId,
+      assessmentId: assessmentId,
     );
 
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => Scaffold(
-          appBar: AppBar(
-            title: const Text('Draw Question'),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.save),
-                onPressed: () async {
-                  if (!mounted) return;
-                  try {
-                    DateTime endTime = DateTime.now();
-                    int timeSpent = endTime.difference(startTime).inSeconds;
-                    await db.insertQuestion(question);
-                    if (mounted) {
-                      setState(() {
-                        _questions.add(question);
-                      });
-                      final analytics = Analytics(
-                        questionId: questionId,
-                        learnerId: widget.teacherId,
-                        timeSpentSeconds: timeSpent,
-                        submissionStatus: 'submitted',
-                        deviceId: _deviceId!,
-                        timestamp: endTime.millisecondsSinceEpoch,
-                      );
-                      await db.insertAnalytics(analytics);
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Question saved')),
-                      );
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Error: $e')),
-                      );
-                    }
-                  }
-                },
-              ),
-            ],
-          ),
+          appBar: AppBar(title: Text('Draw Question')),
           body: CanvasWidget(
             learnerId: widget.teacherId,
             strokes: canvasData,
             readOnly: false,
+            initialAssets: [],
             onSave: () {},
             onUpdate: (data) {
               canvasData = jsonEncode(data['strokes']);
             },
             onAssetsUpdate: (assets) async {
-              final db = Provider.of<DatabaseService>(context, listen: false);
               for (var asset in assets) {
                 await db.insertAsset(Asset(
-                  id: Uuid().v4(),
+                  id: const Uuid().v4(),
                   learnerId: widget.teacherId,
                   questionId: questionId,
                   type: asset.type,
@@ -276,10 +236,46 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                 ));
               }
             },
-            initialAssets: [],
             timetableId: _effectiveTimetableId,
-            slotId: _effectiveSlotId, // Pass the resolved slotId
-            userRole: widget.userRole ?? 'teacher', // Default to 'teacher'
+            slotId: _effectiveSlotId,
+            userRole: widget.userRole ?? 'teacher',
+          ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: () async {
+              if (!mounted) return;
+              try {
+                DateTime endTime = DateTime.now();
+                int timeSpent = endTime.difference(startTime).inSeconds;
+                await db.insertQuestion(question);
+                if (mounted) {
+                  setState(() {
+                    _questions.add(question);
+                  });
+                  final analytics = Analytics(
+                    questionId: questionId,
+                    learnerId: widget.teacherId,
+                    timeSpentSeconds: timeSpent,
+                    submissionStatus: 'submitted',
+                    deviceId: _deviceId!,
+                    timestamp: endTime.millisecondsSinceEpoch,
+                    timetableId: _effectiveTimetableId, // Added
+                    slotId: _effectiveSlotId, // Added
+                  );
+                  await db.insertAnalytics(analytics);
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Question saved')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
+              }
+            },
+            child: const Icon(Icons.save),
           ),
         ),
       ),
@@ -309,29 +305,22 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
 
   Future<String> _getAssessmentType(String assessmentId) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
-    if (_selectedTimetable == null) throw Exception('No timetable selected');
-
-    // Fetch TimetableSlot to get classId
-    final slots =
-        await db.getTimetableSlotsByTimetableId(_selectedTimetable!.id);
-    if (slots.isEmpty)
-      throw Exception('No slots found for timetable ${_selectedTimetable!.id}');
-    final classId = slots.first.classId;
-
-    final assessments = await db.getAssessmentsByClass(classId);
-    final assessment = assessments.firstWhere((a) => a.id == assessmentId,
-        orElse: () => throw Exception('Assessment not found'));
+    final assessment = _assessments.firstWhere(
+      (a) => a.id == assessmentId,
+      orElse: () => throw Exception('Assessment not found'),
+    );
     return assessment.type;
   }
 
   Future<int?> _selectTimerDuration(BuildContext context) async {
-    return showDialog<int>(
+    int? duration;
+    await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Set Timer Duration (seconds)'),
         content: TextField(
           keyboardType: TextInputType.number,
-          onChanged: (value) {},
+          onChanged: (value) => duration = int.tryParse(value),
           decoration: const InputDecoration(hintText: 'Enter seconds'),
         ),
         actions: [
@@ -340,17 +329,19 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, int.tryParse('300')),
+            onPressed: () => Navigator.pop(context, duration ?? 300),
             child: const Text('OK'),
           ),
         ],
       ),
     );
+    return duration;
   }
 
   Future<void> _viewQuestion(Question question) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
     final assets = await db.getAssetsByLearner(widget.teacherId);
+    DateTime startTime = DateTime.now();
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -375,12 +366,27 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
             onSave: () {},
             onUpdate: (data) {},
             timetableId: _effectiveTimetableId,
-            slotId: question.slotId, // Use the question's slotId
-            userRole: widget.userRole ?? 'teacher', // Default to 'teacher'
+            slotId: question.slotId,
+            userRole: widget.userRole ?? 'teacher',
           ),
         ),
       ),
     );
+    if (mounted) {
+      final endTime = DateTime.now();
+      final timeSpent = endTime.difference(startTime).inSeconds;
+      final analytics = Analytics(
+        questionId: question.id,
+        learnerId: widget.teacherId,
+        timeSpentSeconds: timeSpent,
+        submissionStatus: 'viewed',
+        deviceId: _deviceId ?? 'teacher_device_${widget.teacherId}',
+        timestamp: endTime.millisecondsSinceEpoch,
+        timetableId: _effectiveTimetableId, // Added
+        slotId: question.slotId, // Added
+      );
+      await db.insertAnalytics(analytics);
+    }
   }
 
   Future<void> _markAnswers(Question question) async {
@@ -390,10 +396,9 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
         _effectiveTimetableId ?? _selectedTimetable!.id);
     if (slots.isEmpty) return;
     final classId = slots.first.classId;
-    final classData = await db.getClassById(classId);
+    final classData = await db.getClassDataById(classId);
     if (classData == null) return;
-    final grade = classData['grade'] as String;
-    final learners = await db.getLearnersByGrade(grade);
+    final learners = await db.getUsersByClassId(classId);
 
     for (var answer in answers) {
       if (!learners.any((l) => l.id == answer.learnerId)) continue;
@@ -424,7 +429,7 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                         score: await _selectScore(context) ?? answer.score,
                         remarks:
                             await _selectRemarks(context) ?? answer.remarks,
-                        slotId: question.slotId, // Use the question's slotId
+                        slotId: question.slotId,
                       );
                       await db.insertAnswer(updatedAnswer);
                       final analytics = Analytics(
@@ -435,6 +440,8 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                         deviceId:
                             _deviceId ?? 'teacher_device_${widget.teacherId}',
                         timestamp: endTime.millisecondsSinceEpoch,
+                        timetableId: _effectiveTimetableId, // Added
+                        slotId: question.slotId, // Added
                       );
                       await db.insertAnalytics(analytics);
                       if (mounted) {
@@ -473,10 +480,9 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                 updatedStrokes = jsonEncode(data['strokes']);
               },
               onAssetsUpdate: (assets) async {
-                final db = Provider.of<DatabaseService>(context, listen: false);
                 for (var asset in assets) {
                   await db.insertAsset(Asset(
-                    id: Uuid().v4(),
+                    id: const Uuid().v4(),
                     learnerId: answer.learnerId,
                     questionId: question.id,
                     type: asset.type,
@@ -489,8 +495,8 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
                 }
               },
               timetableId: _effectiveTimetableId,
-              slotId: question.slotId, // Use the question's slotId
-              userRole: widget.userRole ?? 'teacher', // Default to 'teacher'
+              slotId: question.slotId,
+              userRole: widget.userRole ?? 'teacher',
             ),
           ),
         ),
@@ -499,13 +505,14 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
   }
 
   Future<double?> _selectScore(BuildContext context) async {
-    return showDialog<double>(
+    double? score;
+    await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Enter Score'),
         content: TextField(
           keyboardType: TextInputType.number,
-          onChanged: (value) {},
+          onChanged: (value) => score = double.tryParse(value),
           decoration: const InputDecoration(hintText: '0-100'),
         ),
         actions: [
@@ -514,21 +521,23 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, double.tryParse('0')),
+            onPressed: () => Navigator.pop(context, score ?? 0.0),
             child: const Text('OK'),
           ),
         ],
       ),
     );
+    return score;
   }
 
   Future<String?> _selectRemarks(BuildContext context) async {
-    return showDialog<String>(
+    String? remarks;
+    await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Enter Remarks'),
         content: TextField(
-          onChanged: (value) {},
+          onChanged: (value) => remarks = value,
           decoration: const InputDecoration(hintText: 'Remarks'),
         ),
         actions: [
@@ -537,12 +546,13 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, ''),
+            onPressed: () => Navigator.pop(context, remarks ?? ''),
             child: const Text('OK'),
           ),
         ],
       ),
     );
+    return remarks;
   }
 
   @override
@@ -566,20 +576,22 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
             items: _timetables.map((t) {
               final slots = _timetableSlots[t.id] ?? [];
               if (slots.isEmpty) {
-                return DropdownMenuItem<Timetable>(
-                  value: t,
+                return const DropdownMenuItem<Timetable>(
+                  value: null,
                   child: Text('No slots'),
                 );
               }
               final timeSlot = slots.first.timeSlot?.split(' ').last ?? 'N/A';
               final classId = slots.first.classId;
-              final classData = Provider.of<List<Class>>(context)
+              final classData = Provider.of<List<ClassData>>(context)
                   .firstWhere((cls) => cls.id == classId,
-                      orElse: () => Class(
+                      orElse: () => ClassData(
                             id: '',
                             teacherId: '',
                             subject: 'Unknown',
                             grade: 'Unknown',
+                            title: 'Unknown',
+                            createdAt: 0,
                           ));
               return DropdownMenuItem<Timetable>(
                 value: t,
@@ -588,12 +600,14 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
               );
             }).toList(),
             onChanged: (value) {
-              setState(() {
-                _selectedTimetable = value;
-                _resolveTimetableAndSlotId();
-                _loadQuestions();
-                _loadAssessments();
-              });
+              if (value != null) {
+                setState(() {
+                  _selectedTimetable = value;
+                  _resolveTimetableAndSlotId();
+                  _loadQuestions();
+                  _loadAssessments();
+                });
+              }
             },
           ),
           Expanded(
@@ -618,4 +632,17 @@ class _TeacherCanvasScreenState extends State<TeacherCanvasScreen> {
       ),
     );
   }
+}
+
+Future<List<User>> getUsersByClassId(
+    BuildContext context, String classId) async {
+  final db = Provider.of<DatabaseService>(context, listen: false);
+  final classData = await db.getClassDataById(classId);
+  if (classData != null) {
+    final learnerIds = classData.learnerIds;
+    final users =
+        await Future.wait(learnerIds.map((id) => db.getUserDataById(id)));
+    return users.whereType<User>().where((u) => u.role == 'learner').toList();
+  }
+  return [];
 }

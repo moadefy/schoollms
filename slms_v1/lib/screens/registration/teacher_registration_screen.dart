@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import 'package:schoollms/models/teacher.model.dart' as TeacherModel;
-import 'package:schoollms/models/learner.model.dart' as LearnerModel;
+import 'package:schoollms/models/user.dart';
 import 'package:schoollms/services/database_service.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 
@@ -22,21 +21,6 @@ class _TeacherRegistrationScreenState extends State<TeacherRegistrationScreen> {
       preferredLanguage = '';
   Map<String, List<String>> qualifiedSubjects = {};
   List<String> supportingDocuments = [];
-
-  // Learner registration fields
-  final learnerCitizenshipIdController = TextEditingController();
-  final learnerNameController = TextEditingController();
-  final learnerSurnameController = TextEditingController();
-  final learnerGradeController = TextEditingController();
-
-  @override
-  void dispose() {
-    learnerCitizenshipIdController.dispose();
-    learnerNameController.dispose();
-    learnerSurnameController.dispose();
-    learnerGradeController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -106,78 +90,40 @@ class _TeacherRegistrationScreenState extends State<TeacherRegistrationScreen> {
                 onChanged: (val) => supportingDocuments = val?.split(',') ?? [],
               ),
               const SizedBox(height: 20),
-              const Text(
-                'Register a Learner',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              TextFormField(
-                controller: learnerCitizenshipIdController,
-                decoration:
-                    const InputDecoration(labelText: 'Learner Citizenship ID'),
-                onChanged: (val) => learnerCitizenshipIdController.text = val,
-              ),
-              TextFormField(
-                controller: learnerNameController,
-                decoration: const InputDecoration(labelText: 'Learner Name'),
-                onChanged: (val) => learnerNameController.text = val,
-              ),
-              TextFormField(
-                controller: learnerSurnameController,
-                decoration: const InputDecoration(labelText: 'Learner Surname'),
-                onChanged: (val) => learnerSurnameController.text = val,
-              ),
-              TextFormField(
-                controller: learnerGradeController,
-                decoration: const InputDecoration(labelText: 'Learner Grade'),
-                onChanged: (val) => learnerGradeController.text = val,
-              ),
               ElevatedButton(
                 onPressed: () async {
                   _formKey.currentState!.save();
                   final teacherId = const Uuid().v4();
-                  final teacher = TeacherModel.TeacherData(
+                  final teacher = User(
                     id: teacherId,
                     country: country,
                     citizenshipId: citizenshipId,
                     name: name,
                     surname: surname,
-                    homeLanguage: homeLanguage,
-                    preferredLanguage: preferredLanguage,
-                    qualifiedSubjects: qualifiedSubjects,
-                    supportingDocuments: supportingDocuments,
+                    email: '', // Placeholder
+                    contactNumber: '', // Placeholder
+                    role: 'teacher',
+                    roleData: {
+                      'qualifiedSubjects': qualifiedSubjects,
+                      'supportingDocuments': supportingDocuments,
+                      'homeLanguage': homeLanguage,
+                      'preferredLanguage': preferredLanguage,
+                    }, // Populate roleData with teacher-specific data
                   );
-                  await db.insertTeacherData(teacher);
-
-                  // Register learner under teacher's credentials
-                  final learnerId = const Uuid().v4();
-                  final learner = LearnerModel.LearnerData(
-                    id: learnerId,
-                    country: country, // Use teacher's country
-                    citizenshipId: learnerCitizenshipIdController.text,
-                    name: learnerNameController.text,
-                    surname: learnerSurnameController.text,
-                    homeLanguage: '', // Placeholder
-                    preferredLanguage: '', // Placeholder
-                    grade: learnerGradeController.text,
-                    subjects: [], // Placeholder
-                    parentDetails: LearnerModel.ParentDetails(
-                      id: '', // Placeholder
-                      name: '',
-                      surname: '',
-                      email: '',
-                      contactNumber: '',
-                      occupation: '',
-                    ),
-                  );
-                  await db.insertLearnerData(learner);
-
-                  Navigator.pushReplacementNamed(context, '/profile',
-                      arguments: {
-                        'userId': teacherId,
-                        'role': 'teacher',
-                      });
+                  try {
+                    await db.insertUserData(teacher);
+                    Navigator.pushReplacementNamed(context, '/timetable',
+                        arguments: {
+                          'userId': teacherId,
+                          'role': 'teacher',
+                        });
+                  } catch (e) {
+                    if (mounted)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error registering: $e')));
+                  }
                 },
-                child: const Text('Register Teacher & Learner'),
+                child: const Text('Register Teacher'),
               ),
             ],
           ),

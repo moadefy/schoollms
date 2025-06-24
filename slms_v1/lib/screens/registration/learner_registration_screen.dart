@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import 'package:schoollms/models/learner.model.dart' as LearnerModel;
+import 'package:schoollms/models/user.dart';
 import 'package:schoollms/services/database_service.dart';
 import 'package:country_code_picker/country_code_picker.dart';
 
@@ -134,32 +134,42 @@ class _LearnerRegistrationScreenState extends State<LearnerRegistrationScreen> {
                 onPressed: () async {
                   _formKey.currentState!.save();
                   final learnerId = const Uuid().v4();
-                  final parentDetails = LearnerModel.ParentDetails(
-                    id: parentIdController.text,
-                    name: parentNameController.text,
-                    surname: parentSurnameController.text,
-                    email: parentEmailController.text,
-                    contactNumber: parentContactController.text,
-                    occupation: parentOccupationController.text,
-                  );
-                  final learner = LearnerModel.LearnerData(
+                  final learner = User(
                     id: learnerId,
                     country: country,
                     citizenshipId: citizenshipId,
                     name: name,
                     surname: surname,
-                    homeLanguage: homeLanguage,
-                    preferredLanguage: preferredLanguage,
-                    grade: grade,
-                    subjects: subjects,
-                    parentDetails: parentDetails,
+                    email: '', // Placeholder
+                    contactNumber: '', // Placeholder
+                    role: 'learner',
+                    roleData: {
+                      'grade': grade,
+                      'subjects': subjects,
+                      'parentDetails': {
+                        'id': parentIdController.text,
+                        'name': parentNameController.text,
+                        'surname': parentSurnameController.text,
+                        'email': parentEmailController.text,
+                        'contactNumber': parentContactController.text,
+                        'occupation': parentOccupationController.text,
+                      },
+                      'homeLanguage': homeLanguage,
+                      'preferredLanguage': preferredLanguage,
+                    }, // Populate roleData with learner-specific data
                   );
-                  await db.insertLearnerData(learner);
-                  Navigator.pushReplacementNamed(context, '/profile',
-                      arguments: {
-                        'userId': learnerId,
-                        'role': 'learner',
-                      }); // Redirect to profile
+                  try {
+                    await db.insertUserData(learner);
+                    Navigator.pushReplacementNamed(context, '/profile',
+                        arguments: {
+                          'userId': learnerId,
+                          'role': 'learner',
+                        }); // Redirect to profile
+                  } catch (e) {
+                    if (mounted)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error registering: $e')));
+                  }
                 },
                 child: const Text('Register'),
               ),

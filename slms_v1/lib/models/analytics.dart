@@ -5,6 +5,8 @@ class Analytics {
   String? submissionStatus; // e.g., 'submitted', 'draft', 'failed'
   String? deviceId; // Device identifier
   int? timestamp; // When the analytics data was recorded
+  String? timetableId; // Added for traceability
+  String? slotId; // Added for traceability
 
   Analytics({
     this.questionId,
@@ -13,6 +15,8 @@ class Analytics {
     this.submissionStatus,
     this.deviceId,
     this.timestamp,
+    this.timetableId, // Added
+    this.slotId, // Added
   });
 
   factory Analytics.fromJson(Map<String, dynamic> json) {
@@ -23,6 +27,8 @@ class Analytics {
       submissionStatus: json['submissionStatus'] as String?,
       deviceId: json['deviceId'] as String?,
       timestamp: json['timestamp'] as int?,
+      timetableId: json['timetableId'] as String?, // Added
+      slotId: json['slotId'] as String?, // Added
     );
   }
 
@@ -34,6 +40,8 @@ class Analytics {
       'submissionStatus': submissionStatus,
       'deviceId': deviceId,
       'timestamp': timestamp,
+      'timetableId': timetableId, // Added
+      'slotId': slotId, // Added
     };
   }
 }
