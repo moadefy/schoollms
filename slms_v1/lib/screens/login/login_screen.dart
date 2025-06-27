@@ -13,6 +13,25 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   String role = 'Please Select Your Role', country = '', citizenshipId = '';
   bool _obscureText = true; // For toggling citizenship ID visibility
+  bool _isLoading = false; // Track loading state
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeDatabase();
+  }
+
+  Future<void> _initializeDatabase() async {
+    final db = Provider.of<DatabaseService>(context, listen: false);
+    try {
+      await db.init();
+    } catch (e) {
+      print('Database initialization error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to initialize database')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +72,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
-                          'Welcome to schoollms',
+                          'Welcome to SchoolLMS',
                           style: TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
@@ -118,36 +137,55 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 20),
                         ElevatedButton(
-                          onPressed: () async {
-                            if (_formKey.currentState!.validate()) {
-                              final user = await db.getUserByCitizenship(
-                                  country, citizenshipId);
-                              if (user != null) {
-                                final userRole = user['role'] as String;
-                                if (userRole == role) {
-                                  Navigator.pushReplacementNamed(
-                                      context, '/timetable',
-                                      arguments: {
-                                        'userId': user['id'] as String,
-                                        'role': role,
-                                      });
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                          content: Text(
-                                              'Role does not match credentials')));
-                                }
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                        content: Text('Invalid credentials')));
-                              }
-                            }
-                          },
+                          onPressed: _isLoading
+                              ? null
+                              : () async {
+                                  if (_formKey.currentState!.validate()) {
+                                    setState(() => _isLoading = true);
+                                    try {
+                                      final user =
+                                          await db.getUserByCitizenship(
+                                              country, citizenshipId);
+                                      if (user != null) {
+                                        final userRole = user['role'] as String;
+                                        if (userRole == role) {
+                                          Navigator.pushReplacementNamed(
+                                              context, '/timetable',
+                                              arguments: {
+                                                'userId': user['id'] as String,
+                                                'role': role,
+                                              });
+                                        } else {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(const SnackBar(
+                                                  content: Text(
+                                                      'Role does not match credentials')));
+                                        }
+                                      } else {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(const SnackBar(
+                                                content: Text(
+                                                    'Invalid credentials')));
+                                      }
+                                    } catch (e) {
+                                      print('Login error: $e');
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(const SnackBar(
+                                              content: Text(
+                                                  'Login failed. Please try again.')));
+                                    } finally {
+                                      setState(() => _isLoading = false);
+                                    }
+                                  }
+                                },
                           style: ElevatedButton.styleFrom(
                             minimumSize: const Size(double.infinity, 50),
                           ),
-                          child: const Text('Login'),
+                          child: _isLoading
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white,
+                                )
+                              : const Text('Login'),
                         ),
                         const SizedBox(height: 10),
                         // Register Button with Validation

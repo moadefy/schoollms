@@ -16,6 +16,9 @@ import 'package:schoollms/models/learnertimetable.dart';
 import 'package:schoollms/widgets/canvas_widget.dart';
 import 'package:schoollms/screens/canvas/teacher_canvas_screen.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:schoollms/models/subject.dart'; // New import
+import 'package:schoollms/models/grade.dart'; // New import
+import 'package:schoollms/models/language.dart'; // New import
 
 class TimetableScreen extends StatefulWidget {
   @override
@@ -52,9 +55,16 @@ class _TimetableScreenState extends State<TimetableScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final args =
-        ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
-    userId = args['userId'];
-    role = args['role'];
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    if (args == null) {
+      userId = 'default_user_id';
+      role = 'guest';
+      errorMessage = 'No user data provided. Please log in.';
+      setState(() {});
+    } else {
+      userId = args['userId'] as String? ?? 'default_user_id';
+      role = args['role'] as String? ?? 'guest';
+    }
     if (deviceId == null) _loadInitialData();
   }
 
@@ -103,7 +113,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
       } else if (role == 'learner') {
         final user = await db.getUserDataById(userId);
         List<Map<String, dynamic>> slots = [];
-        if (user != null && user.roleData.containsKey('grade')) {
+        if (user != null && user.roleData.containsKey('selectedGrade')) {
           slots = await db.getLearnerTimetableSlots(userId);
         }
         setState(() {
@@ -121,6 +131,12 @@ class _TimetableScreenState extends State<TimetableScreen> {
           timetableSlots = slots;
           isLoading = false;
         });
+      } else if (role == 'guest') {
+        setState(() {
+          timetableSlots = [];
+          errorMessage = 'Please log in to view timetables.';
+          isLoading = false;
+        });
       }
     } catch (e) {
       if (mounted)
@@ -134,193 +150,239 @@ class _TimetableScreenState extends State<TimetableScreen> {
   Future<void> _showAddTimetableDialog(
       BuildContext context, int slotIndex) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
-    String? selectedClassId;
-    List<String> selectedLearnerIds = [];
-
+    final subjects = await db.getAllSubjects();
+    final grades = await db.getAllGrades();
     var classes = await db.getTeacherClassDataByTeacherId(userId);
-    if (classes.isEmpty) {
-      await _showAddClassDialog(context);
-      classes =
-          await db.getTeacherClassDataByTeacherId(userId); // Refresh classes
-    }
+
+    bool isAddingNewClass = classes.isEmpty;
+    String? selectedClassId;
+    String? selectedSubjectId;
+    String? selectedGradeId;
+    List<String> selectedLearnerIds = [];
+    List<User> existingLearners = [];
 
     await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Add Timetable Slot'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButton<String>(
-                hint: const Text('Select Class'),
-                value: selectedClassId,
-                items: classes
-                    .map((cls) => DropdownMenuItem(
-                          value: cls.id,
-                          child: Text('${cls.subject} (Grade ${cls.grade})'),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  setState(() => selectedClassId = value);
-                  if (value != null) {
-                    _loadLearners(value).then((learners) {
-                      setState(() => this.learners = learners);
-                    });
-                  }
-                },
-              ),
-              if (learners.isNotEmpty)
-                ElevatedButton(
-                  onPressed: () async {
-                    final result = await showDialog<List<String>>(
-                      context: context,
-                      builder: (context) =>
-                          LearnerSelectionDialog(learners: learners),
-                    );
-                    if (result != null)
-                      setState(() => selectedLearnerIds = result);
-                  },
-                  child: Text('Select Learners (${selectedLearnerIds.length})'),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                if (selectedClassId != null && selectedLearnerIds.isNotEmpty) {
-                  final timeSlot =
-                      '${selectedDay.toIso8601String().split('T')[0]} ${timeSlots[slotIndex]}';
-                  final timetableId = const Uuid().v4();
-                  final slots = [
-                    {
-                      'id': const Uuid().v4(),
-                      'classId': selectedClassId,
-                      'timeSlot': timeSlot,
-                      'learnerIds': selectedLearnerIds,
-                    },
-                  ];
-                  final timetable = Timetable(
-                    id: timetableId,
-                    teacherId: userId,
-                    userRole: 'teacher',
-                    userId: userId,
+        context: context,
+        builder: (context) => StatefulBuilder(builder: (context, setState) {
+              return FutureBuilder<User?>(
+                future: Provider.of<DatabaseService>(context, listen: false)
+                    .getUserDataById(userId),
+                builder: (context, snapshot) {
+                  final user = snapshot.data;
+                  final qualifiedSubjects = user?.roleData['qualifiedSubjects']
+                          as List<Map<String, String>>? ??
+                      [];
+                  final subjectItems = subjects
+                      .where((s) => qualifiedSubjects.any((qs) =>
+                          qs['subjectId'] == s.id &&
+                          qs['gradeId'] ==
+                              grades.firstWhere((g) => g.number == 10).id))
+                      .map((s) => DropdownMenuItem<String>(
+                            value: s.id,
+                            child: Text(s.name),
+                          ))
+                      .toList();
+                  final gradeItems = grades
+                      .where((g) => qualifiedSubjects.any((qs) =>
+                          qs['gradeId'] == g.id &&
+                          subjects.any((s) => s.id == selectedSubjectId)))
+                      .map((g) => DropdownMenuItem<String>(
+                            value: g.id,
+                            child: Text('Grade ${g.number}'),
+                          ))
+                      .toList();
+
+                  return AlertDialog(
+                    title: Text(
+                        isAddingNewClass ? 'Add New Class' : 'Select Class'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isAddingNewClass)
+                          Column(
+                            children: [
+                              DropdownButton<String>(
+                                hint: const Text('Select Subject'),
+                                value: selectedSubjectId,
+                                items: subjectItems,
+                                onChanged: (value) =>
+                                    setState(() => selectedSubjectId = value),
+                              ),
+                              DropdownButton<String>(
+                                hint: const Text('Select Grade'),
+                                value: selectedGradeId,
+                                items: gradeItems,
+                                onChanged: (value) =>
+                                    setState(() => selectedGradeId = value),
+                              ),
+                            ],
+                          )
+                        else
+                          DropdownButton<String>(
+                            hint: const Text('Select Class'),
+                            value: selectedClassId,
+                            items: classes
+                                .map((cls) => DropdownMenuItem<String>(
+                                      value: cls.id,
+                                      child: Text(cls.title),
+                                    ))
+                                .toList(),
+                            onChanged: (value) async {
+                              setState(() => selectedClassId = value);
+                              if (value != null) {
+                                existingLearners = await _loadLearners(value);
+                                setState(() => learners = existingLearners);
+                              }
+                            },
+                          ),
+                        if (!isAddingNewClass && selectedClassId != null)
+                          ElevatedButton(
+                            onPressed: () async {
+                              final classData =
+                                  await db.getClassDataById(selectedClassId!);
+                              final classGradeId = classData?.gradeId;
+                              final result = await showDialog<List<String>>(
+                                context: context,
+                                builder: (context) => LearnerSelectionDialog(
+                                  learners: learners,
+                                  onAddNew: () async {
+                                    if (classGradeId != null) {
+                                      await _showAddLearnerDialog(
+                                          context, classGradeId);
+                                    }
+                                  },
+                                  classGradeId: classGradeId,
+                                ),
+                              );
+                              if (result != null)
+                                setState(() => selectedLearnerIds = result);
+                            },
+                            child: Text(
+                                'Select/Add Learners (${selectedLearnerIds.length})'),
+                          ),
+                        if (!isAddingNewClass)
+                          ElevatedButton(
+                            onPressed: () =>
+                                setState(() => isAddingNewClass = true),
+                            child: const Text('Add New Class'),
+                          ),
+                      ],
+                    ),
+                    actions: [
+                      if (isAddingNewClass)
+                        TextButton(
+                          onPressed: () async {
+                            if (selectedSubjectId != null &&
+                                selectedGradeId != null) {
+                              final existingClasses = await db
+                                  .getTeacherClassDataByTeacherId(userId);
+                              final sameSubjectGradeClasses = existingClasses
+                                  .where((cls) =>
+                                      cls.subjectId == selectedSubjectId &&
+                                      cls.gradeId == selectedGradeId)
+                                  .toList();
+                              int classNumber = sameSubjectGradeClasses.isEmpty
+                                  ? 1
+                                  : sameSubjectGradeClasses.map((cls) {
+                                        final match = RegExp(r'Class (\d+)$')
+                                            .firstMatch(cls.title);
+                                        return match != null
+                                            ? int.parse(match.group(1)!)
+                                            : 0;
+                                      }).reduce((a, b) => a > b ? a : b) +
+                                      1;
+                              final subject = subjects
+                                  .firstWhere((s) => s.id == selectedSubjectId);
+                              final grade = grades
+                                  .firstWhere((g) => g.id == selectedGradeId);
+                              final classTitle =
+                                  '${subject.name} ${grade.number} Class $classNumber';
+                              final newClass = ClassData(
+                                id: const Uuid().v4(),
+                                teacherId: userId,
+                                subjectId: selectedSubjectId!,
+                                gradeId: selectedGradeId!,
+                                title: classTitle,
+                                createdAt:
+                                    DateTime.now().millisecondsSinceEpoch,
+                                learnerIds: [],
+                              );
+                              try {
+                                await db.insertClassData(newClass);
+                                setState(() => isAddingNewClass = false);
+                                classes = await db
+                                    .getTeacherClassDataByTeacherId(userId);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                        content:
+                                            Text('Class added successfully')));
+                              } catch (e) {
+                                if (mounted)
+                                  setState(() =>
+                                      errorMessage = 'Error adding class: $e');
+                              }
+                            }
+                          },
+                          child: const Text('Add Class'),
+                        ),
+                      TextButton(
+                        onPressed: () {
+                          if (!isAddingNewClass &&
+                              selectedClassId != null &&
+                              selectedLearnerIds.isNotEmpty) {
+                            _saveTimetableSlot(selectedClassId!,
+                                selectedLearnerIds, slotIndex);
+                          }
+                          Navigator.pop(context);
+                        },
+                        child: isAddingNewClass
+                            ? const Text('Close')
+                            : const Text('Save'),
+                      ),
+                    ],
                   );
-                  try {
-                    await db.insertTimetable(timetable, slots);
-                    await _loadTimetableSlots();
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Timetable slot added successfully')));
-                  } catch (e) {
-                    if (mounted)
-                      setState(() =>
-                          errorMessage = 'Error adding timetable slot: $e');
-                  }
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
+                },
+              );
+            }));
   }
 
-  Future<void> _showAddClassDialog(BuildContext context) async {
+  Future<void> _saveTimetableSlot(
+      String classId, List<String> learnerIds, int slotIndex) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
-    String? subject;
-    String? grade;
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add New Class'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButton<String>(
-              hint: const Text('Select Subject'),
-              value: subject,
-              items: ['Math', 'Science', 'English']
-                  .map((s) => DropdownMenuItem(
-                        value: s,
-                        child: Text(s),
-                      ))
-                  .toList(),
-              onChanged: (value) => setState(() => subject = value),
-            ),
-            DropdownButton<String>(
-              hint: const Text('Select Grade'),
-              value: grade,
-              items: ['10', '11', '12']
-                  .map((g) => DropdownMenuItem(
-                        value: g,
-                        child: Text('Grade $g'),
-                      ))
-                  .toList(),
-              onChanged: (value) => setState(() => grade = value),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (subject != null && grade != null) {
-                final existingClasses =
-                    await db.getTeacherClassDataByTeacherId(userId);
-                final sameSubjectGradeClasses = existingClasses
-                    .where(
-                        (cls) => cls.subject == subject && cls.grade == grade)
-                    .toList();
-                int classNumber = sameSubjectGradeClasses.isEmpty
-                    ? 1
-                    : sameSubjectGradeClasses.map((cls) {
-                          final match =
-                              RegExp(r'Class (\d+)$').firstMatch(cls.title);
-                          return match != null ? int.parse(match.group(1)!) : 0;
-                        }).reduce((a, b) => a > b ? a : b) +
-                        1;
-                final classTitle = '$subject $grade Class $classNumber';
-                final newClass = ClassData(
-                  id: const Uuid().v4(),
-                  teacherId: userId,
-                  subject: subject!,
-                  grade: grade!,
-                  title: classTitle,
-                  createdAt: DateTime.now().millisecondsSinceEpoch,
-                );
-                try {
-                  await db.insertClassData(newClass);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Class added successfully')));
-                } catch (e) {
-                  if (mounted)
-                    setState(() => errorMessage = 'Error adding class: $e');
-                }
-              }
-            },
-            child: const Text('Add Class'),
-          ),
-        ],
-      ),
+    final timeSlot =
+        '${selectedDay.toIso8601String().split('T')[0]} ${timeSlots[slotIndex]}';
+    final timetableId = const Uuid().v4();
+    final slots = [
+      {
+        'id': const Uuid().v4(),
+        'classId': classId,
+        'timeSlot': timeSlot,
+        'learnerIds': learnerIds,
+      },
+    ];
+    final timetable = Timetable(
+      id: timetableId,
+      teacherId: userId,
+      userRole: 'teacher',
+      userId: userId,
     );
+    try {
+      await db.insertTimetable(timetable, slots);
+      await _loadTimetableSlots();
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Timetable slot added successfully')));
+    } catch (e) {
+      if (mounted)
+        setState(() => errorMessage = 'Error adding timetable slot: $e');
+    }
   }
 
-  Future<void> _showAddLearnerDialog(BuildContext context) async {
+  Future<void> _showAddLearnerDialog(
+      BuildContext context, String? classGradeId) async {
     final db = Provider.of<DatabaseService>(context, listen: false);
     final learnerNameController = TextEditingController();
-    String? grade;
-    String? classId;
-    final classes = await db.getTeacherClassDataByTeacherId(userId);
+    final grades = await db.getAllGrades();
+    String? selectedGradeId = classGradeId;
 
     await showDialog(
       context: context,
@@ -335,27 +397,15 @@ class _TimetableScreenState extends State<TimetableScreen> {
             ),
             DropdownButton<String>(
               hint: const Text('Select Grade'),
-              value: grade,
-              items: ['10', '11', '12']
+              value: selectedGradeId,
+              items: grades
                   .map((g) => DropdownMenuItem(
-                        value: g,
-                        child: Text('Grade $g'),
+                        value: g.id,
+                        child: Text('Grade ${g.number}'),
                       ))
                   .toList(),
-              onChanged: (value) => setState(() => grade = value),
+              onChanged: (value) => setState(() => selectedGradeId = value),
             ),
-            if (classes.isNotEmpty)
-              DropdownButton<String>(
-                hint: const Text('Select Class (Optional)'),
-                value: classId,
-                items: classes
-                    .map((cls) => DropdownMenuItem(
-                          value: cls.id,
-                          child: Text(cls.title),
-                        ))
-                    .toList(),
-                onChanged: (value) => setState(() => classId = value),
-              ),
           ],
         ),
         actions: [
@@ -365,35 +415,36 @@ class _TimetableScreenState extends State<TimetableScreen> {
           ),
           TextButton(
             onPressed: () async {
-              if (learnerNameController.text.isNotEmpty && grade != null) {
+              if (learnerNameController.text.isNotEmpty &&
+                  selectedGradeId != null &&
+                  selectedGradeId == classGradeId) {
                 final newUser = User(
                   id: const Uuid().v4(),
-                  country: '', // Placeholder
-                  citizenshipId: '', // Placeholder
+                  country: 'ZA',
+                  citizenshipId: const Uuid().v4(),
                   name: learnerNameController.text,
-                  surname: '', // Placeholder
+                  surname: '',
                   role: 'learner',
-                  roleData: {'grade': grade!},
+                  roleData: {
+                    'selectedGrade': selectedGradeId,
+                    'selectedSubjects': [],
+                  },
                 );
                 try {
                   await db.insertUserData(newUser);
-                  if (classId != null) {
-                    final classData = await db.getClassDataById(classId!);
-                    final updatedLearnerIds = [
-                      ...classData.learnerIds,
-                      newUser.id
-                    ];
-                    await db.updateClassLearnerIds(classId!,
-                        updatedLearnerIds.toSet().toList()); // Avoid duplicates
-                  }
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                       content: Text('Learner registered successfully')));
+                  setState(() => learners.add(newUser));
                 } catch (e) {
                   if (mounted)
                     setState(
                         () => errorMessage = 'Error registering learner: $e');
                 }
+              } else if (selectedGradeId != classGradeId) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(
+                        'Learner grade must match the class grade ($classGradeId)')));
               }
             },
             child: const Text('Register'),
@@ -413,7 +464,9 @@ class _TimetableScreenState extends State<TimetableScreen> {
             await Future.wait(learnerIds.map((id) => db.getUserDataById(id)));
         return users
             .whereType<User>()
-            .where((u) => u.role == 'learner')
+            .where((u) =>
+                u.role == 'learner' &&
+                u.roleData['selectedGrade'] == classData.gradeId)
             .toList();
       }
       return [];
@@ -451,66 +504,78 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Assessment'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButton<String>(
-              hint: const Text('Select Assessment Type'),
-              value: assessmentType,
-              items: ['activity', 'test', 'homework', 'assignment', 'exam']
-                  .map((type) => DropdownMenuItem(
-                        value: type,
-                        child: Text(type),
-                      ))
-                  .toList(),
-              onChanged: (value) => setState(() => assessmentType = value),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Add Assessment'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButton<String>(
+                  hint: const Text('Select Assessment Type'),
+                  value: assessmentType,
+                  items: ['activity', 'test', 'homework', 'assignment', 'exam']
+                      .map((type) => DropdownMenuItem(
+                            value: type,
+                            child: Text(type),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => assessmentType = value);
+                    }
+                  },
+                ),
+                if (assessmentType == 'test' || assessmentType == 'exam')
+                  TextField(
+                    keyboardType: TextInputType.number,
+                    decoration:
+                        const InputDecoration(labelText: 'Timer (seconds)'),
+                    onChanged: (value) => timerSeconds = int.tryParse(value),
+                  ),
+              ],
             ),
-            if (assessmentType == 'test' || assessmentType == 'exam')
-              TextField(
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Timer (seconds)'),
-                onChanged: (value) => timerSeconds = int.tryParse(value),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
               ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (assessmentType != null) {
-                closeTime = timerSeconds != null
-                    ? DateTime.now().add(Duration(seconds: timerSeconds!))
-                    : null;
-                final assessment = Assessment(
-                  id: const Uuid().v4(),
-                  classIds: [classId!],
-                  type: assessmentType!,
-                  timerSeconds: timerSeconds,
-                  closeTime: closeTime,
-                  questionIds: [],
-                  slotId: slotId,
-                );
-                try {
-                  await db.insertAssessment(assessment);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Assessment added successfully')));
-                } catch (e) {
-                  if (mounted) {
-                    setState(
-                        () => errorMessage = 'Error adding assessment: $e');
-                  }
-                }
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+              TextButton(
+                onPressed: assessmentType == null
+                    ? null
+                    : () async {
+                        closeTime = timerSeconds != null
+                            ? DateTime.now()
+                                .add(Duration(seconds: timerSeconds!))
+                            : null;
+                        final assessment = Assessment(
+                          id: const Uuid().v4(),
+                          classIds: [classId!],
+                          type: assessmentType!,
+                          timerSeconds: timerSeconds,
+                          closeTime: closeTime,
+                          questionIds: [],
+                          slotId: slotId,
+                        );
+                        try {
+                          await db.insertAssessment(assessment);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content:
+                                      Text('Assessment added successfully')));
+                        } catch (e) {
+                          if (mounted) {
+                            setState(() =>
+                                errorMessage = 'Error adding assessment: $e');
+                          }
+                        }
+                        Navigator.pop(context);
+                      },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -576,14 +641,12 @@ class _TimetableScreenState extends State<TimetableScreen> {
     final assets = await db.getAssetsByLearner(answer.learnerId!);
     DateTime startTime = DateTime.now();
 
-    // Fetch the correct slotId from TimetableSlot associated with the timetable
     String? slotId;
     final slots = await db.getTimetableSlotsByTimetableId(timetable.id);
     if (slots.isNotEmpty) {
-      slotId = slots.first.id; // Use the first slot's ID
+      slotId = slots.first.id;
     } else {
-      slotId =
-          answer.slotId ?? const Uuid().v4(); // Fallback to existing or new
+      slotId = answer.slotId ?? const Uuid().v4();
       if (mounted) {
         setState(() => errorMessage =
             'No slots found for timetable ${timetable.id}, using fallback slotId');
@@ -810,40 +873,48 @@ class _TimetableScreenState extends State<TimetableScreen> {
       MaterialPageRoute(
         builder: (context) => Scaffold(
           appBar: AppBar(title: Text('Post Learner Question')),
-          body: CanvasWidget(
-            learnerId: userId,
-            strokes: content,
-            readOnly: false,
-            initialAssets: assets
-                .map((a) => CanvasAsset(
-                      id: a.id,
-                      type: a.type,
-                      path: a.data,
-                      pageIndex: 0,
-                      position: Offset(a.positionX, a.positionY),
-                      scale: a.scale,
-                    ))
-                .toList(),
-            onSave: () => content = jsonEncode(jsonDecode(content)),
-            onUpdate: (data) => content = jsonEncode(data['strokes']),
-            onAssetsUpdate: (updatedAssets) async {
-              for (var asset in updatedAssets) {
-                await db.insertAsset(Asset(
-                  id: const Uuid().v4(),
+          body: FutureBuilder<void>(
+            future: Future.delayed(Duration.zero),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.done) {
+                return CanvasWidget(
                   learnerId: userId,
-                  questionId: question.id,
-                  type: asset.type,
-                  data: asset.path,
-                  positionX: asset.position.dx,
-                  positionY: asset.position.dy,
-                  scale: asset.scale,
-                  created_at: DateTime.now().millisecondsSinceEpoch,
-                ));
+                  strokes: content,
+                  readOnly: false,
+                  initialAssets: assets
+                      .map((a) => CanvasAsset(
+                            id: a.id,
+                            type: a.type,
+                            path: a.data,
+                            pageIndex: 0,
+                            position: Offset(a.positionX, a.positionY),
+                            scale: a.scale,
+                          ))
+                      .toList(),
+                  onSave: () => content = jsonEncode(jsonDecode(content)),
+                  onUpdate: (data) => content = jsonEncode(data['strokes']),
+                  onAssetsUpdate: (updatedAssets) async {
+                    for (var asset in updatedAssets) {
+                      await db.insertAsset(Asset(
+                        id: const Uuid().v4(),
+                        learnerId: userId,
+                        questionId: question.id,
+                        type: asset.type,
+                        data: asset.path,
+                        positionX: asset.position.dx,
+                        positionY: asset.position.dy,
+                        scale: asset.scale,
+                        created_at: DateTime.now().millisecondsSinceEpoch,
+                      ));
+                    }
+                  },
+                  timetableId: timetable.id,
+                  slotId: slotId,
+                  userRole: 'teacher',
+                );
               }
+              return const Center(child: CircularProgressIndicator());
             },
-            timetableId: timetable.id,
-            slotId: slotId,
-            userRole: 'teacher',
           ),
           floatingActionButton: FloatingActionButton(
             onPressed: () async {
@@ -898,40 +969,48 @@ class _TimetableScreenState extends State<TimetableScreen> {
       MaterialPageRoute(
         builder: (context) => Scaffold(
           appBar: AppBar(title: Text('Answer Learner Question')),
-          body: CanvasWidget(
-            learnerId: userId,
-            strokes: content,
-            readOnly: false,
-            initialAssets: assets
-                .map((a) => CanvasAsset(
-                      id: a.id,
-                      type: a.type,
-                      path: a.data,
-                      pageIndex: 0,
-                      position: Offset(a.positionX, a.positionY),
-                      scale: a.scale,
-                    ))
-                .toList(),
-            onSave: () => content = jsonEncode(jsonDecode(content)),
-            onUpdate: (data) => content = jsonEncode(data['strokes']),
-            onAssetsUpdate: (updatedAssets) async {
-              for (var asset in updatedAssets) {
-                await db.insertAsset(Asset(
-                  id: const Uuid().v4(),
+          body: FutureBuilder<void>(
+            future: Future.delayed(Duration.zero),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.done) {
+                return CanvasWidget(
                   learnerId: userId,
-                  questionId: question.id,
-                  type: asset.type,
-                  data: asset.path,
-                  positionX: asset.position.dx,
-                  positionY: asset.position.dy,
-                  scale: asset.scale,
-                  created_at: DateTime.now().millisecondsSinceEpoch,
-                ));
+                  strokes: content,
+                  readOnly: false,
+                  initialAssets: assets
+                      .map((a) => CanvasAsset(
+                            id: a.id,
+                            type: a.type,
+                            path: a.data,
+                            pageIndex: 0,
+                            position: Offset(a.positionX, a.positionY),
+                            scale: a.scale,
+                          ))
+                      .toList(),
+                  onSave: () => content = jsonEncode(jsonDecode(content)),
+                  onUpdate: (data) => content = jsonEncode(data['strokes']),
+                  onAssetsUpdate: (updatedAssets) async {
+                    for (var asset in updatedAssets) {
+                      await db.insertAsset(Asset(
+                        id: const Uuid().v4(),
+                        learnerId: userId,
+                        questionId: question.id,
+                        type: asset.type,
+                        data: asset.path,
+                        positionX: asset.position.dx,
+                        positionY: asset.position.dy,
+                        scale: asset.scale,
+                        created_at: DateTime.now().millisecondsSinceEpoch,
+                      ));
+                    }
+                  },
+                  timetableId: timetable.id,
+                  slotId: question.slotId,
+                  userRole: 'teacher',
+                );
               }
+              return const Center(child: CircularProgressIndicator());
             },
-            timetableId: timetable.id,
-            slotId: question.slotId,
-            userRole: 'teacher',
           ),
           floatingActionButton: FloatingActionButton(
             onPressed: () async {
@@ -1077,7 +1156,7 @@ class _TimetableScreenState extends State<TimetableScreen> {
             onChanged: (value) {
               if (value != null) {
                 setState(() {
-                  selectedDay = DateTime.now(); // Reset to today
+                  selectedDay = DateTime.now();
                   if (value == 'Week')
                     selectedDay = selectedDay.add(const Duration(days: 7));
                   if (value == 'Month')
@@ -1096,18 +1175,19 @@ class _TimetableScreenState extends State<TimetableScreen> {
                 firstDate: DateTime(2023),
                 lastDate: DateTime(2030),
               );
-              if (selected != null)
+              if (selected != null) {
                 setState(() {
                   selectedDay = selected;
                   _loadTimetableSlots();
                 });
+              }
             },
           ),
           if (role == 'teacher')
             IconButton(
               icon: const Icon(Icons.class_),
-              onPressed: () => _showAddClassDialog(context),
-              tooltip: 'Add Class',
+              onPressed: () => _showAddTimetableDialog(context, 0),
+              tooltip: 'Add Class or Timetable',
             ),
         ],
       ),
@@ -1115,119 +1195,126 @@ class _TimetableScreenState extends State<TimetableScreen> {
           ? const Center(child: CircularProgressIndicator())
           : errorMessage != null
               ? Center(child: Text(errorMessage!))
-              : GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 5,
-                    childAspectRatio: 1.5,
-                  ),
-                  itemCount: timeSlots.length,
-                  itemBuilder: (context, index) {
-                    final timeSlot = timeSlots[index];
-                    final fullTimeSlot =
-                        '${selectedDay.toIso8601String().split('T')[0]} $timeSlot';
-                    final slot = timetableSlots.firstWhere(
-                      (s) => s['timeSlot'] == fullTimeSlot,
-                      orElse: () => {},
-                    );
-                    return GestureDetector(
-                      onTap: slot.isEmpty && role == 'teacher'
-                          ? () => _showAddTimetableDialog(context, index)
-                          : null,
-                      child: Card(
-                        color: slot.isNotEmpty
-                            ? _getSubjectColor(slot['subject'] ?? 'Unknown')
-                            : Colors.green[100],
-                        child: FutureBuilder<int>(
-                          future: slot.isNotEmpty && slot['classId'] != null
-                              ? Provider.of<DatabaseService>(context,
-                                      listen: false)
-                                  .getClassDataById(slot['classId'])
-                                  .then((data) => data.learnerIds.length)
-                                  .catchError((_) => 0)
-                              : Future.value(0),
-                          builder: (context, snapshot) {
-                            int learnerCount = snapshot.data ?? 0;
-                            return Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(timeSlot,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold)),
-                                  if (slot.isNotEmpty)
-                                    Column(
-                                      children: [
-                                        Text(
-                                            'Subject: ${slot['subject'] ?? 'Unknown'}'),
-                                        Text(
-                                            'Grade: ${slot['grade'] ?? 'Unknown'}'),
-                                        Text('Learners: $learnerCount'),
-                                        Text(
-                                            'Selected: ${slot['learnerIds'] is String ? (slot['learnerIds'] as String).split(',').join(', ') : (slot['learnerIds'] as List<String>).join(', ')}'),
-                                        if (role == 'teacher')
-                                          PopupMenuButton<String>(
-                                            onSelected: (value) async {
-                                              final timetable = Timetable(
-                                                id: slot['timetableId']
-                                                    as String,
-                                                teacherId: userId,
-                                                userRole: 'teacher',
-                                                userId: userId,
-                                              );
-                                              if (value == 'add_assessment') {
-                                                await _showAddAssessmentDialog(
-                                                    context, timetable);
-                                              } else if (value ==
-                                                  'open_notes') {
-                                                await _openTeacherNotesCanvas(
-                                                    timetable);
-                                              } else if (value ==
-                                                  'post_question') {
-                                                await _postLearnerQuestion(
-                                                    timetable);
-                                              } else if (value ==
-                                                  'select_learner') {
-                                                await _showLearnerSelectionDialog(
-                                                    timetable);
-                                              }
-                                            },
-                                            itemBuilder: (context) => [
-                                              const PopupMenuItem(
-                                                value: 'add_assessment',
-                                                child: Text('Add Assessment'),
-                                              ),
-                                              const PopupMenuItem(
-                                                value: 'open_notes',
-                                                child: Text('Open Notes'),
-                                              ),
-                                              const PopupMenuItem(
-                                                value: 'post_question',
-                                                child: Text('Post Question'),
-                                              ),
-                                              const PopupMenuItem(
-                                                value: 'select_learner',
-                                                child: Text('Select Learner'),
-                                              ),
-                                            ],
-                                          ),
-                                      ],
-                                    ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
+              : SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height -
+                            kToolbarHeight -
+                            kBottomNavigationBarHeight),
+                    child: GridView.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 5,
+                        childAspectRatio: 1.5,
                       ),
-                    );
-                  },
+                      itemCount: timeSlots.length,
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      itemBuilder: (context, index) {
+                        final timeSlot = timeSlots[index];
+                        final fullTimeSlot =
+                            '${selectedDay.toIso8601String().split('T')[0]} $timeSlot';
+                        final slot = timetableSlots.firstWhere(
+                          (s) => s['timeSlot'] == fullTimeSlot,
+                          orElse: () => {},
+                        );
+                        return GestureDetector(
+                          onTap: slot.isEmpty && role == 'teacher'
+                              ? () => _showAddTimetableDialog(context, index)
+                              : null,
+                          child: Card(
+                            color: slot.isNotEmpty
+                                ? _getSubjectColor(slot['subject'] ?? 'Unknown')
+                                : Colors.green[100],
+                            child: FutureBuilder<int>(
+                              future: slot.isNotEmpty && slot['classId'] != null
+                                  ? Provider.of<DatabaseService>(context,
+                                          listen: false)
+                                      .getClassDataById(slot['classId'])
+                                      .then((data) => data.learnerIds.length)
+                                      .catchError((_) => 0)
+                                  : Future.value(0),
+                              builder: (context, snapshot) {
+                                int learnerCount = snapshot.data ?? 0;
+                                return Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(timeSlot,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold)),
+                                      if (slot.isNotEmpty)
+                                        Column(
+                                          children: [
+                                            Text(
+                                                'Subject: ${slot['subject'] ?? 'Unknown'}'),
+                                            Text(
+                                                'Grade: ${slot['grade'] ?? 'Unknown'}'),
+                                            Text('Learners: $learnerCount'),
+                                            if (role == 'teacher')
+                                              PopupMenuButton<String>(
+                                                onSelected: (value) async {
+                                                  final timetable = Timetable(
+                                                    id: slot['timetableId']
+                                                        as String,
+                                                    teacherId: userId,
+                                                    userRole: 'teacher',
+                                                    userId: userId,
+                                                  );
+                                                  if (value ==
+                                                      'add_assessment') {
+                                                    await _showAddAssessmentDialog(
+                                                        context, timetable);
+                                                  } else if (value ==
+                                                      'open_notes') {
+                                                    await _openTeacherNotesCanvas(
+                                                        timetable);
+                                                  } else if (value ==
+                                                      'post_question') {
+                                                    await _postLearnerQuestion(
+                                                        timetable);
+                                                  } else if (value ==
+                                                      'select_learner') {
+                                                    await _showLearnerSelectionDialog(
+                                                        timetable);
+                                                  }
+                                                },
+                                                itemBuilder: (context) => [
+                                                  const PopupMenuItem(
+                                                      value: 'add_assessment',
+                                                      child: Text(
+                                                          'Add Assessment')),
+                                                  const PopupMenuItem(
+                                                      value: 'open_notes',
+                                                      child:
+                                                          Text('Open Notes')),
+                                                  const PopupMenuItem(
+                                                      value: 'post_question',
+                                                      child: Text(
+                                                          'Post Question')),
+                                                  const PopupMenuItem(
+                                                      value: 'select_learner',
+                                                      child: Text(
+                                                          'Select Learner')),
+                                                ],
+                                              ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ),
       floatingActionButton: role == 'teacher'
           ? FloatingActionButton(
-              onPressed: () {
-                _showAddTimetableDialog(
-                    context, 0); // Default to first slot for FAB
-              },
+              onPressed: () => _showAddTimetableDialog(context, 0),
               child: const Icon(Icons.add),
               tooltip: 'Add Timetable Slot',
             )
@@ -1263,8 +1350,11 @@ class _TimetableScreenState extends State<TimetableScreen> {
 
 class LearnerSelectionDialog extends StatefulWidget {
   final List<User> learners;
+  final Future<void> Function() onAddNew;
+  final String? classGradeId;
 
-  LearnerSelectionDialog({required this.learners});
+  LearnerSelectionDialog(
+      {required this.learners, required this.onAddNew, this.classGradeId});
 
   @override
   _LearnerSelectionDialogState createState() => _LearnerSelectionDialogState();
@@ -1285,24 +1375,46 @@ class _LearnerSelectionDialogState extends State<LearnerSelectionDialog> {
       title: const Text('Select Learners'),
       content: Container(
         width: double.maxFinite,
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: widget.learners.length,
-          itemBuilder: (context, index) {
-            final learner = widget.learners[index];
-            return CheckboxListTile(
-              title: Text(learner.name),
-              value: selectedLearnerIds.contains(learner.id),
-              onChanged: (value) {
-                setState(() {
-                  if (value!)
-                    selectedLearnerIds.add(learner.id);
-                  else
-                    selectedLearnerIds.remove(learner.id);
-                });
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListView.builder(
+              shrinkWrap: true,
+              itemCount: widget.learners.length,
+              itemBuilder: (context, index) {
+                final learner = widget.learners[index];
+                final learnerGradeId =
+                    learner.roleData['selectedGrade'] as String?;
+                final isValidGrade = widget.classGradeId == null ||
+                    learnerGradeId == widget.classGradeId;
+                return CheckboxListTile(
+                  title: Text(learner.name),
+                  subtitle: Text('Grade: ${learnerGradeId ?? "Unknown"}'),
+                  value:
+                      selectedLearnerIds.contains(learner.id) && isValidGrade,
+                  onChanged: isValidGrade
+                      ? (value) {
+                          setState(() {
+                            if (value!)
+                              selectedLearnerIds.add(learner.id);
+                            else
+                              selectedLearnerIds.remove(learner.id);
+                          });
+                        }
+                      : null,
+                  tristate: !isValidGrade,
+                  activeColor: isValidGrade ? null : Colors.grey,
+                );
               },
-            );
-          },
+            ),
+            TextButton(
+              onPressed: () async {
+                await widget.onAddNew();
+                Navigator.pop(context);
+              },
+              child: const Text('Add New Learner'),
+            ),
+          ],
         ),
       ),
       actions: [

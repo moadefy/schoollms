@@ -1,12 +1,11 @@
-// class.model.dart
 import 'package:sqflite/sqflite.dart';
 import 'dart:convert';
 
 class ClassData {
   final String id;
   final String teacherId;
-  final String subject;
-  final String grade;
+  final String subjectId; // Changed from subject to subjectId
+  final String gradeId; // Changed from grade to gradeId
   final String title; // Auto-generated, e.g., "Math 10 Class 1"
   final int createdAt; // Timestamp in milliseconds
   final List<String>
@@ -15,8 +14,8 @@ class ClassData {
   ClassData({
     required this.id,
     required this.teacherId,
-    required this.subject,
-    required this.grade,
+    required this.subjectId,
+    required this.gradeId,
     required this.title,
     required this.createdAt,
     this.learnerIds = const [], // Default to empty list
@@ -26,8 +25,8 @@ class ClassData {
     return {
       'id': id,
       'teacherId': teacherId,
-      'subject': subject,
-      'grade': grade,
+      'subjectId': subjectId,
+      'gradeId': gradeId,
       'title': title,
       'createdAt': createdAt,
       'learnerIds': jsonEncode(learnerIds), // Store as JSON string
@@ -38,8 +37,8 @@ class ClassData {
     return ClassData(
       id: map['id'] as String,
       teacherId: map['teacherId'] as String,
-      subject: map['subject'] as String,
-      grade: map['grade'] as String,
+      subjectId: map['subjectId'] as String,
+      gradeId: map['gradeId'] as String,
       title: map['title'] as String,
       createdAt: map['createdAt'] as int,
       learnerIds: map['learnerIds'] != null
@@ -53,13 +52,15 @@ class ClassData {
       CREATE TABLE classdata (
         id TEXT PRIMARY KEY,
         teacherId TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        grade TEXT NOT NULL,
+        subjectId TEXT NOT NULL,
+        gradeId TEXT NOT NULL,
         title TEXT NOT NULL,
         createdAt INTEGER NOT NULL,
         learnerIds TEXT NOT NULL,
-        UNIQUE (teacherId, subject, grade),
-        FOREIGN KEY (teacherId) REFERENCES teachers(id) ON DELETE CASCADE
+        UNIQUE (teacherId, subjectId, gradeId),
+        FOREIGN KEY (teacherId) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (subjectId) REFERENCES subjects(id) ON DELETE RESTRICT,
+        FOREIGN KEY (gradeId) REFERENCES grades(id) ON DELETE RESTRICT
       )
     ''');
   }
@@ -68,8 +69,8 @@ class ClassData {
   ClassData copyWith({
     String? id,
     String? teacherId,
-    String? subject,
-    String? grade,
+    String? subjectId,
+    String? gradeId,
     String? title,
     int? createdAt,
     List<String>? learnerIds,
@@ -77,8 +78,8 @@ class ClassData {
     return ClassData(
       id: id ?? this.id,
       teacherId: teacherId ?? this.teacherId,
-      subject: subject ?? this.subject,
-      grade: grade ?? this.grade,
+      subjectId: subjectId ?? this.subjectId,
+      gradeId: gradeId ?? this.gradeId,
       title: title ?? this.title,
       createdAt: createdAt ?? this.createdAt,
       learnerIds: learnerIds ?? this.learnerIds,

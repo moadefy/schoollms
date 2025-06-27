@@ -61,6 +61,11 @@ class User {
   }
 
   static User fromMap(Map<String, dynamic> map) {
+    final roleDataJson = map['roleData'] != null
+        ? jsonDecode(map['roleData'] as String) as Map<String, dynamic>
+        : {};
+    final qualifiedSubjects =
+        roleDataJson['qualifiedSubjects'] as Map<String, dynamic>? ?? {};
     return User(
       id: map['id'] as String,
       country: map['country'] as String,
@@ -70,9 +75,11 @@ class User {
       email: map['email'] as String? ?? '',
       contactNumber: map['contactNumber'] as String? ?? '',
       role: map['role'] as String,
-      roleData: map['roleData'] != null
-          ? jsonDecode(map['roleData'] as String) as Map<String, dynamic>
-          : {},
+      roleData: {
+        'qualifiedSubjects': qualifiedSubjects.map(
+          (key, value) => MapEntry(key, (value as List?)?.cast<String>() ?? []),
+        ),
+      },
     );
   }
 

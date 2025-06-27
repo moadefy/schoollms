@@ -5,6 +5,7 @@ import 'package:intl/intl.dart'; // For TimeOfDay formatting
 import 'package:schoollms/services/database_service.dart';
 import 'package:schoollms/services/sync_service.dart';
 import 'package:schoollms/providers/sync_state.dart';
+import 'package:schoollms/models/learnertimetable.dart'; // Import for LearnerTimetable
 
 class BackgroundSyncService {
   final DatabaseService _dbService;
@@ -20,18 +21,25 @@ class BackgroundSyncService {
         final timetables = await _dbService.getLearnerTimetable(learnerId);
         final now = DateTime.now();
         for (var timetable in timetables) {
-          final timeSlot = timetable.timeSlot.split(' ')[1].split('-');
-          final startTime = _parseTime(timeSlot[0], now);
-          final endTime = _parseTime(timeSlot[1], now);
-          if (now.isAfter(startTime) && now.isBefore(endTime)) {
-            final classData = await _dbService.getClassById(timetable.classId);
-            if (classData != null && classData['teacherId'] != null) {
-              final teacherId = classData['teacherId'] as String;
-              await _syncService.connectLearner(
-                  teacherId, timetable.classId, learnerId);
-              Provider.of<SyncState>(context, listen: false).updateSyncStatus(
-                lastSyncTime: TimeOfDay.fromDateTime(now).format(context),
-              );
+          // Ensure timetable has a valid timeSlot
+          if (timetable.timeSlot != null && timetable.timeSlot.isNotEmpty) {
+            final timeSlot = timetable.timeSlot.split(' ')[1].split('-');
+            if (timeSlot.length == 2) {
+              final startTime = _parseTime(timeSlot[0], now);
+              final endTime = _parseTime(timeSlot[1], now);
+              if (now.isAfter(startTime) && now.isBefore(endTime)) {
+                final classData =
+                    await _dbService.getClassDataById(timetable.classId);
+                if (classData != null && classData.teacherId != null) {
+                  final teacherId = classData.teacherId;
+                  await _syncService.connectLearner(
+                      teacherId, timetable.classId, learnerId);
+                  Provider.of<SyncState>(context, listen: false)
+                      .updateSyncStatus(
+                    lastSyncTime: TimeOfDay.fromDateTime(now).format(context),
+                  );
+                }
+              }
             }
           }
         }

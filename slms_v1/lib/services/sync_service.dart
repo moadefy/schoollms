@@ -13,6 +13,8 @@ import 'package:schoollms/models/learnertimetable.dart'; // Import for LearnerTi
 import 'package:schoollms/models/question.dart'; // Import for Question
 import 'package:schoollms/models/answer.dart'; // Import for Answer
 import 'package:schoollms/models/assessment.dart'; // Added for Assessment
+import 'package:schoollms/models/timetable_slot_association.dart'; // Added for TimetableSlotAssociation
+import 'package:schoollms/models/timetable_slot.dart'; // Added for TimetableSlot
 
 class SyncService {
   ServerSocket? _server;
@@ -129,6 +131,13 @@ class SyncService {
     final timetable =
         learnerTimetables.isNotEmpty ? learnerTimetables.first : null;
     final classId = timetable?.classId ?? '';
+    final slotAssociations = classId.isNotEmpty
+        ? await _dbService
+            .getTimetableSlotAssociationsByTimetableId(timetable!.id)
+        : [];
+    final slots = classId.isNotEmpty
+        ? await _dbService.getTimetableSlotsByTimetableId(timetable!.id)
+        : [];
     final questions =
         classId.isNotEmpty ? await _dbService.getQuestionsByClass(classId) : [];
     final assessments = classId.isNotEmpty
@@ -165,9 +174,10 @@ class SyncService {
 
     final syncData = {
       'timetables': learnerTimetables.map((t) => t.toMap()).toList(),
+      'slot_associations': slotAssociations.map((sa) => sa.toMap()).toList(),
+      'slots': slots.map((s) => s.toMap()).toList(),
       'questions': questions.map((q) => q.toMap()).toList(),
-      'assessments':
-          assessments.map((a) => a.toMap()).toList(), // Added assessments
+      'assessments': assessments.map((a) => a.toMap()).toList(),
       'batched_pending': batchedSyncs,
       'canvas_data': canvasData,
     };
@@ -331,13 +341,24 @@ class SyncService {
 
   void _processSyncResponse(Map<String, dynamic> response) {
     final timetables = response['timetables'] as List;
+    final slotAssociations = response['slot_associations'] as List;
+    final slots = response['slots'] as List;
     final questions = response['questions'] as List;
-    final assessments = response['assessments'] as List; // Added assessments
-    final answers = response['answers'] as List;
+    final assessments = response['assessments'] as List;
+    final answers = response['answers'] as List? ?? [];
     final batchedPending = response['batched_pending'] as Map<String, dynamic>;
 
     for (var t in timetables) {
       _dbService.insertLearnerTimetable(LearnerTimetable.fromMap(t));
+    }
+
+    for (var sa in slotAssociations) {
+      _dbService
+          .insertTimetableSlotAssociation(TimetableSlotAssociation.fromMap(sa));
+    }
+
+    for (var s in slots) {
+      _dbService.insertTimetableSlot(TimetableSlot.fromMap(s));
     }
 
     for (var q in questions) {
@@ -345,7 +366,6 @@ class SyncService {
     }
 
     for (var a in assessments) {
-      // Process assessments
       _dbService.insertAssessment(Assessment.fromMap(a));
     }
 
