@@ -15,7 +15,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:uuid/uuid.dart';
 
-// Placeholder for Protobuf-generated classes (generate from stroke.proto)
+// Placeholder for Protobuf-generated classes
 class ProtoPoint {
   final double x;
   final double y;
@@ -37,10 +37,9 @@ class ProtoStroke {
       };
 }
 
-// Class to represent an asset (image or PDF) on the canvas
 class CanvasAsset {
   final String id;
-  final String type; // 'image' or 'pdf'
+  final String type;
   final String path;
   final int pageIndex;
   final Offset position;
@@ -101,7 +100,7 @@ class Stroke {
 
   factory Stroke.fromJson(Map<String, dynamic> json) {
     final points = (json['points'] as List<dynamic>?)
-            ?.map((p) => ProtoPoint(p['x'] as double, p['y'] as double))
+            ?.map((p) => ProtoPoint(p['x'] as double, p['y' as double]))
             .map((protoPoint) => Offset(protoPoint.x, protoPoint.y))
             .toList() ??
         [];
@@ -124,16 +123,15 @@ class Stroke {
 @immutable
 class CanvasWidget extends StatefulWidget {
   final String learnerId;
-  final String strokes; // JSON-encoded initial strokes
-  final bool readOnly; // Parameter for read-only mode
+  final String strokes; // JSON-encoded initial strokes per page
+  final bool readOnly;
   final VoidCallback onSave;
   final Function(Map<String, dynamic>) onUpdate;
-  final List<CanvasAsset>? initialAssets; // Parameter for initial assets
-  final Function(List<CanvasAsset>)?
-      onAssetsUpdate; // Callback for asset updates
-  final String? userRole; // New parameter for user role
-  final String? timetableId; // Added to match all screens
-  final String? slotId; // Added slotId parameter
+  final List<CanvasAsset>? initialAssets;
+  final Function(List<CanvasAsset>)? onAssetsUpdate;
+  final String? userRole;
+  final String? timetableId;
+  final String? slotId;
 
   const CanvasWidget({
     Key? key,
@@ -144,9 +142,9 @@ class CanvasWidget extends StatefulWidget {
     required this.onUpdate,
     this.initialAssets,
     this.onAssetsUpdate,
-    this.userRole, // Added userRole parameter
-    this.timetableId, // Added
-    this.slotId, // Added
+    this.userRole,
+    this.timetableId,
+    this.slotId,
   }) : super(key: key);
 
   @override
@@ -154,7 +152,7 @@ class CanvasWidget extends StatefulWidget {
 }
 
 class _CanvasWidgetState extends State<CanvasWidget> {
-  late List<Stroke> _strokes;
+  late Map<int, List<Stroke>> _strokesPerPage; // Strokes per page
   late List<CanvasAsset> _assets;
   Stroke? _currentStroke;
   vector.Matrix4 _transform = vector.Matrix4.identity();
@@ -163,64 +161,69 @@ class _CanvasWidgetState extends State<CanvasWidget> {
   PdfDocument? _currentPdf;
   ui.Image? _currentImage;
   int _currentPageIndex = 0;
+  double _strokeWidth = 2.0;
+  Color _strokeColor = Colors.black;
   String _status = 'active';
   String? _attendance;
   int? _attendanceDate;
   DateTime? _sessionStartTime;
   String? _deviceId;
+  bool _showPagePreview = false;
 
   @override
   void initState() {
     super.initState();
-    _strokes = _parseStrokes(widget.strokes);
+    _strokesPerPage = _parseStrokes(widget.strokes);
     _assets = widget.initialAssets ?? [];
     _sessionStartTime = DateTime.now();
-    _initializeDeviceId();
     _loadCanvasData();
     _loadLearnerTimetableData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _initializeDeviceId();
   }
 
   Future<void> _initializeDeviceId() async {
     final deviceInfo = DeviceInfoPlugin();
     if (Theme.of(context).platform == TargetPlatform.android) {
       final androidInfo = await deviceInfo.androidInfo;
-      setState(() {
-        _deviceId = androidInfo.id;
-      });
+      setState(() => _deviceId = androidInfo.id);
     } else if (Theme.of(context).platform == TargetPlatform.iOS) {
       final iosInfo = await deviceInfo.iosInfo;
-      setState(() {
-        _deviceId = iosInfo.identifierForVendor;
-      });
+      setState(() => _deviceId = iosInfo.identifierForVendor);
     } else {
-      setState(() {
-        _deviceId = 'unknown_device_${widget.learnerId}';
-      });
+      setState(() => _deviceId = 'unknown_device_${widget.learnerId}');
     }
   }
 
-  List<Stroke> _parseStrokes(String strokesJson) {
+  Map<int, List<Stroke>> _parseStrokes(String strokesJson) {
     try {
-      final List<dynamic> strokeData = jsonDecode(strokesJson);
-      return strokeData.map((data) => Stroke.fromJson(data)).toList();
+      final Map<String, dynamic> strokeData = jsonDecode(strokesJson);
+      return strokeData.map((key, value) => MapEntry(
+            int.parse(key),
+            (value as List<dynamic>)
+                .map((data) => Stroke.fromJson(data))
+                .toList(),
+          ));
     } catch (e) {
-      return [];
+      return {_currentPageIndex: []};
     }
   }
 
   Future<void> _loadCanvasData() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
     final assets = await dbService.getAssetsByLearner(widget.learnerId);
-    setState(() {
-      _assets.addAll(assets.map((asset) => CanvasAsset(
-            id: asset.id,
-            type: asset.type,
-            path: asset.data,
-            pageIndex: 0,
-            position: Offset(asset.positionX, asset.positionY),
-            scale: asset.scale,
-          )));
-    });
+    setState(() => _assets.addAll(assets.map((asset) => CanvasAsset(
+          id: asset.id,
+          type: asset.type,
+          path: asset.data,
+          pageIndex: 0,
+          position: Offset(asset.positionX, asset.positionY),
+          scale: asset.scale,
+        ))));
   }
 
   Future<void> _loadLearnerTimetableData() async {
@@ -241,51 +244,98 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     }
   }
 
-  void _startStroke(Offset position) {
+  void _handleScaleStart(ScaleStartDetails details) {
     if (widget.readOnly) return;
-    final localPosition = _transformPoint(position);
+    final localPosition = _transformPoint(details.localFocalPoint);
+    setState(() => _panOffset = details.localFocalPoint);
+    if (details.pointerCount == 1) {
+      // Single touch: start drawing
+      setState(() {
+        _currentStroke = Stroke([localPosition], _strokeColor, _strokeWidth);
+        if (_currentStroke != null)
+          _strokesPerPage
+              .putIfAbsent(_currentPageIndex, () => [])
+              .add(_currentStroke!);
+      });
+    }
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    if (widget.readOnly) return;
+    if (details.pointerCount == 1) {
+      // Single touch: update drawing
+      if (_currentStroke != null) {
+        final localPosition = _transformPoint(details.localFocalPoint);
+        setState(() => _currentStroke!.points.add(localPosition));
+      }
+    } else {
+      // Multi-touch: pan (scroll)
+      setState(() {
+        _transform.translate(
+          details.localFocalPoint.dx - _panOffset.dx,
+          details.localFocalPoint.dy - _panOffset.dy,
+        );
+        _panOffset = details.localFocalPoint;
+      });
+    }
+  }
+
+  void _handleScaleEnd(ScaleEndDetails details) {
+    if (widget.readOnly || _currentStroke == null) return;
+    if (details.pointerCount == 1) {
+      // Single touch: end drawing
+      setState(() => _currentStroke = null);
+      _saveStrokes();
+    }
+  }
+
+  void _zoomIn() {
+    if (widget.readOnly) return;
     setState(() {
-      _currentStroke = Stroke(
-        [localPosition],
-        Colors.black,
-        2.0,
-      );
-      if (_currentStroke != null) _strokes.add(_currentStroke!);
+      _scale *= 1.2;
+      _transform.scale(1.2);
     });
   }
 
-  void _updateStroke(Offset position) {
-    if (widget.readOnly || _currentStroke == null) return;
-    final localPosition = _transformPoint(position);
+  void _zoomOut() {
+    if (widget.readOnly) return;
     setState(() {
-      _currentStroke!.points.add(localPosition);
+      _scale /= 1.2;
+      _transform.scale(1 / 1.2);
     });
   }
 
-  void _endStroke() {
-    if (widget.readOnly || _currentStroke == null) return;
+  void _addPage() {
+    if (widget.readOnly) return;
     setState(() {
-      _currentStroke = null;
+      _currentPageIndex = _strokesPerPage.keys.isEmpty
+          ? 0
+          : _strokesPerPage.keys.reduce((a, b) => a > b ? a : b) + 1;
+      _strokesPerPage[_currentPageIndex] = [];
     });
     _saveStrokes();
   }
 
+  void _navigateToPage(int pageIndex) {
+    if (widget.readOnly) return;
+    setState(() => _currentPageIndex = pageIndex);
+    if (_currentPdf != null) _renderPdfPage(pageIndex);
+  }
+
   void _undo() {
-    if (widget.readOnly || _strokes.isEmpty) return;
-    setState(() {
-      _strokes.removeLast();
-    });
+    if (widget.readOnly || _strokesPerPage[_currentPageIndex]!.isEmpty ?? true)
+      return;
+    setState(() => _strokesPerPage[_currentPageIndex]!.removeLast());
     _saveStrokes();
   }
 
   void _clear() {
     if (widget.readOnly) return;
     setState(() {
-      _strokes.clear();
-      _assets.clear();
+      _strokesPerPage[_currentPageIndex] = [];
+      _assets.removeWhere((a) => a.pageIndex == _currentPageIndex);
       _currentPdf = null;
       _currentImage = null;
-      _currentPageIndex = 0;
     });
     _saveStrokes();
     _saveAssets();
@@ -301,19 +351,16 @@ class _CanvasWidgetState extends State<CanvasWidget> {
       setState(() {
         _currentImage = image;
         _currentPdf = null;
-        _currentPageIndex = 0;
         final newAsset = CanvasAsset(
           id: const Uuid().v4(),
           type: 'image',
           path: pickedFile.path,
-          pageIndex: 0,
+          pageIndex: _currentPageIndex,
           position: Offset.zero,
           scale: 1.0,
         );
         _assets.add(newAsset);
-        if (widget.onAssetsUpdate != null) {
-          widget.onAssetsUpdate!([newAsset]);
-        }
+        if (widget.onAssetsUpdate != null) widget.onAssetsUpdate!([newAsset]);
       });
       _saveAssets();
     }
@@ -331,19 +378,17 @@ class _CanvasWidgetState extends State<CanvasWidget> {
       setState(() {
         _currentPdf = pdfDoc;
         _currentImage = null;
-        _currentPageIndex = 0;
+        _renderPdfPage(_currentPageIndex);
         final newAsset = CanvasAsset(
           id: const Uuid().v4(),
           type: 'pdf',
           path: pickedFile.path!,
-          pageIndex: 0,
+          pageIndex: _currentPageIndex,
           position: Offset.zero,
           scale: 1.0,
         );
         _assets.add(newAsset);
-        if (widget.onAssetsUpdate != null) {
-          widget.onAssetsUpdate!([newAsset]);
-        }
+        if (widget.onAssetsUpdate != null) widget.onAssetsUpdate!([newAsset]);
       });
       _saveAssets();
     }
@@ -354,35 +399,19 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     final page = await _currentPdf!.getPage(pageIndex + 1);
     final pageImage = await page.render();
     final image = await pageImage.createImageIfNotAvailable();
-    setState(() {
-      _currentImage = image;
-      _currentPageIndex = pageIndex;
-      _updateAssetPage(pageIndex);
-    });
-  }
-
-  void _nextPage() {
-    if (widget.readOnly ||
-        _currentPdf == null ||
-        _currentPageIndex >= _currentPdf!.pageCount - 1) return;
-    _renderPdfPage(_currentPageIndex + 1);
-  }
-
-  void _previousPage() {
-    if (widget.readOnly || _currentPageIndex <= 0) return;
-    _renderPdfPage(_currentPageIndex - 1);
+    setState(() => _currentImage = image);
   }
 
   void _updateAssetPage(int pageIndex) {
     setState(() {
-      final assetIndex = _assets
-          .indexWhere((a) => a.type == 'pdf' && a.path == _assets.last.path);
+      final assetIndex = _assets.indexWhere((a) =>
+          a.type == 'pdf' &&
+          a.path == _assets.lastWhere((a) => a.type == 'pdf').path);
       if (assetIndex != -1) {
         final updatedAsset = _assets[assetIndex].copyWith(pageIndex: pageIndex);
         _assets[assetIndex] = updatedAsset;
-        if (widget.onAssetsUpdate != null) {
+        if (widget.onAssetsUpdate != null)
           widget.onAssetsUpdate!([updatedAsset]);
-        }
       }
     });
     _saveAssets();
@@ -390,10 +419,17 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   Future<void> _saveStrokes() async {
     final dbService = Provider.of<DatabaseService>(context, listen: false);
-    await dbService.saveStrokes(widget.learnerId, _strokes);
+    await dbService.saveStrokes(
+        widget.learnerId,
+        _strokesPerPage.map((key, value) =>
+                MapEntry(key.toString(), value.map((s) => s.toJson()).toList()))
+            as List<Stroke>);
     await _saveLearnerTimetableData();
     widget.onSave();
-    widget.onUpdate({'strokes': _strokes.map((s) => s.toJson()).toList()});
+    widget.onUpdate({
+      'strokes': _strokesPerPage.map(
+          (k, v) => MapEntry(k.toString(), v.map((s) => s.toJson()).toList()))
+    });
     _logAnalytics('stroke_update');
   }
 
@@ -402,9 +438,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     await dbService.saveAssets(widget.learnerId, _assets);
     await _saveLearnerTimetableData();
     widget.onSave();
-    if (widget.onAssetsUpdate != null) {
-      widget.onAssetsUpdate!(_assets);
-    }
+    if (widget.onAssetsUpdate != null) widget.onAssetsUpdate!(_assets);
     _logAnalytics('asset_update');
   }
 
@@ -429,9 +463,7 @@ class _CanvasWidgetState extends State<CanvasWidget> {
 
   void _setStatus(String status) {
     if (widget.readOnly) return;
-    setState(() {
-      _status = status;
-    });
+    setState(() => _status = status);
     _saveLearnerTimetableData();
   }
 
@@ -452,145 +484,201 @@ class _CanvasWidgetState extends State<CanvasWidget> {
     return Offset(transformedVector.x, transformedVector.y);
   }
 
-  void _onScaleStart(ScaleStartDetails details) {
-    setState(() {
-      _panOffset = details.focalPoint;
-    });
-  }
-
-  void _onScaleUpdate(ScaleUpdateDetails details) {
-    setState(() {
-      _scale *= details.scale;
-      _transform = vector.Matrix4.identity()
-        ..scale(_scale)
-        ..translate(details.focalPoint.dx - _panOffset.dx,
-            details.focalPoint.dy - _panOffset.dy);
-      _panOffset = details.focalPoint;
-    });
-  }
-
   Future<void> _logAnalytics(String action) async {
     if (_sessionStartTime == null || _deviceId == null) return;
     final dbService = Provider.of<DatabaseService>(context, listen: false);
     final endTime = DateTime.now();
     final timeSpent = endTime.difference(_sessionStartTime!).inSeconds;
     final analytics = Analytics(
-      questionId: '', // To be set by parent if applicable
+      questionId: '',
       learnerId: widget.learnerId,
       timeSpentSeconds: timeSpent,
       submissionStatus: action == 'stroke_update' ? 'draft' : 'asset_updated',
       deviceId: _deviceId!,
       timestamp: endTime.millisecondsSinceEpoch,
-      timetableId: widget.timetableId, // Added for traceability
-      slotId: widget.slotId, // Added for traceability
+      timetableId: widget.timetableId,
+      slotId: widget.slotId,
     );
     await dbService.insertAnalytics(analytics);
-    _sessionStartTime = endTime; // Reset for next session
+    _sessionStartTime = endTime;
   }
 
   @override
   Widget build(BuildContext context) {
     bool isAdmin = widget.userRole == 'admin';
 
-    return Stack(
+    return Column(
       children: [
-        GestureDetector(
-          onPanStart: widget.readOnly
-              ? null
-              : (details) => _startStroke(details.localPosition),
-          onPanUpdate: widget.readOnly
-              ? null
-              : (details) => _updateStroke(details.localPosition),
-          onPanEnd: widget.readOnly ? null : (details) => _endStroke(),
-          onScaleStart: _onScaleStart,
-          onScaleUpdate: _onScaleUpdate,
-          child: CustomPaint(
-            painter: CanvasPainter(
-              strokes: _strokes,
-              assets: _assets,
-              transform: _transform,
-              currentImage: _currentImage,
+        if (_showPagePreview)
+          Container(
+            height: 100,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _strokesPerPage.length,
+              itemBuilder: (context, index) {
+                final page = _strokesPerPage.keys.elementAt(index);
+                return GestureDetector(
+                  onTap: () => _navigateToPage(page),
+                  child: Container(
+                    width: 80,
+                    margin: EdgeInsets.all(4),
+                    color: _currentPageIndex == page ? Colors.grey[300] : null,
+                    child: Center(child: Text('Page $page')),
+                  ),
+                );
+              },
             ),
-            child: Container(),
           ),
-        ),
-        Positioned(
-          top: 10,
-          right: 10,
-          child: Column(
+        Expanded(
+          child: Stack(
             children: [
-              IconButton(
-                icon: const Icon(Icons.undo),
-                onPressed: widget.readOnly ? null : _undo,
-              ),
-              IconButton(
-                icon: const Icon(Icons.clear),
-                onPressed: widget.readOnly ? null : _clear,
-              ),
-              IconButton(
-                icon: const Icon(Icons.image),
-                onPressed: widget.readOnly ? null : _pickImage,
-              ),
-              IconButton(
-                icon: const Icon(Icons.picture_as_pdf),
-                onPressed: widget.readOnly ? null : _pickPdf,
-              ),
-              if (_currentPdf != null) ...[
-                IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: widget.readOnly ? null : _previousPage,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.arrow_forward),
-                  onPressed: widget.readOnly ? null : _nextPage,
-                ),
-              ],
-              const SizedBox(height: 10),
-              DropdownButton<String>(
-                value: _status,
-                items: const [
-                  DropdownMenuItem(value: 'active', child: Text('Active')),
-                  DropdownMenuItem(value: 'absent', child: Text('Absent')),
-                  DropdownMenuItem(value: 'pending', child: Text('Pending')),
-                ],
-                onChanged:
-                    widget.readOnly ? null : (value) => _setStatus(value!),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.check_circle),
-                    onPressed: widget.readOnly
-                        ? null
-                        : () => _setAttendance('present'),
-                    color: _attendance == 'present' ? Colors.green : null,
+              GestureDetector(
+                onScaleStart: _handleScaleStart,
+                onScaleUpdate: _handleScaleUpdate,
+                onScaleEnd: _handleScaleEnd,
+                child: CustomPaint(
+                  painter: CanvasPainter(
+                    strokes: _strokesPerPage[_currentPageIndex] ?? [],
+                    assets: _assets
+                        .where((a) => a.pageIndex == _currentPageIndex)
+                        .toList(),
+                    transform: _transform,
+                    currentImage: _currentImage,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.cancel),
-                    onPressed:
-                        widget.readOnly ? null : () => _setAttendance('absent'),
-                    color: _attendance == 'absent' ? Colors.red : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.access_time),
-                    onPressed:
-                        widget.readOnly ? null : () => _setAttendance('late'),
-                    color: _attendance == 'late' ? Colors.orange : null,
-                  ),
-                ],
+                  child: Container(),
+                ),
               ),
-              if (_attendance != null && _attendanceDate != null)
-                Text(
-                  'Attendance: $_attendance at ${DateTime.fromMillisecondsSinceEpoch(_attendanceDate!).toLocal()}',
-                  style: const TextStyle(fontSize: 12),
+              Positioned(
+                top: 10,
+                left: 10,
+                child: Row(
+                  children: [
+                    DropdownButton<double>(
+                      value: _strokeWidth,
+                      items: [1.0, 2.0, 4.0, 6.0]
+                          .map((width) => DropdownMenuItem(
+                              value: width, child: Text('${width.toInt()}px')))
+                          .toList(),
+                      onChanged: widget.readOnly
+                          ? null
+                          : (value) => setState(() => _strokeWidth = value!),
+                    ),
+                    SizedBox(width: 10),
+                    DropdownButton<Color>(
+                      value: _strokeColor,
+                      items: [
+                        Colors.black,
+                        Colors.red,
+                        Colors.blue,
+                        Colors.green
+                      ]
+                          .map((color) => DropdownMenuItem(
+                              value: color,
+                              child: Container(
+                                  width: 20, height: 20, color: color)))
+                          .toList(),
+                      onChanged: widget.readOnly
+                          ? null
+                          : (value) => setState(() => _strokeColor = value!),
+                    ),
+                    SizedBox(width: 10),
+                    IconButton(
+                        icon: Icon(Icons.zoom_in),
+                        onPressed: widget.readOnly ? null : _zoomIn),
+                    IconButton(
+                        icon: Icon(Icons.zoom_out),
+                        onPressed: widget.readOnly ? null : _zoomOut),
+                    IconButton(
+                        icon: Icon(Icons.add),
+                        onPressed: widget.readOnly ? null : _addPage),
+                    IconButton(
+                        icon: Icon(Icons.list),
+                        onPressed: () => setState(
+                            () => _showPagePreview = !_showPagePreview)),
+                  ],
                 ),
-              if (isAdmin)
-                ElevatedButton(
-                  onPressed: widget.readOnly ? null : _clear,
-                  child: const Text('Admin Clear All'),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Column(
+                  children: [
+                    IconButton(
+                        icon: const Icon(Icons.undo),
+                        onPressed: widget.readOnly ? null : _undo),
+                    IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: widget.readOnly ? null : _clear),
+                    IconButton(
+                        icon: const Icon(Icons.image),
+                        onPressed: widget.readOnly ? null : _pickImage),
+                    IconButton(
+                        icon: const Icon(Icons.picture_as_pdf),
+                        onPressed: widget.readOnly ? null : _pickPdf),
+                    if (_currentPdf != null) ...[
+                      IconButton(
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: widget.readOnly
+                              ? null
+                              : () => _renderPdfPage(_currentPageIndex - 1)),
+                      IconButton(
+                          icon: const Icon(Icons.arrow_forward),
+                          onPressed: widget.readOnly
+                              ? null
+                              : () => _renderPdfPage(_currentPageIndex + 1)),
+                    ],
+                    const SizedBox(height: 10),
+                    DropdownButton<String>(
+                      value: _status,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'active', child: Text('Active')),
+                        DropdownMenuItem(
+                            value: 'absent', child: Text('Absent')),
+                        DropdownMenuItem(
+                            value: 'pending', child: Text('Pending')),
+                      ],
+                      onChanged: widget.readOnly
+                          ? null
+                          : (value) => _setStatus(value!),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(
+                            icon: const Icon(Icons.check_circle),
+                            onPressed: widget.readOnly
+                                ? null
+                                : () => _setAttendance('present'),
+                            color:
+                                _attendance == 'present' ? Colors.green : null),
+                        IconButton(
+                            icon: const Icon(Icons.cancel),
+                            onPressed: widget.readOnly
+                                ? null
+                                : () => _setAttendance('absent'),
+                            color: _attendance == 'absent' ? Colors.red : null),
+                        IconButton(
+                            icon: const Icon(Icons.access_time),
+                            onPressed: widget.readOnly
+                                ? null
+                                : () => _setAttendance('late'),
+                            color:
+                                _attendance == 'late' ? Colors.orange : null),
+                      ],
+                    ),
+                    if (_attendance != null && _attendanceDate != null)
+                      Text(
+                          'Attendance: $_attendance at ${DateTime.fromMillisecondsSinceEpoch(_attendanceDate!).toLocal()}',
+                          style: const TextStyle(fontSize: 12)),
+                    if (isAdmin)
+                      ElevatedButton(
+                          onPressed: widget.readOnly ? null : _clear,
+                          child: const Text('Admin Clear All')),
+                  ],
                 ),
+              ),
             ],
           ),
         ),
@@ -618,40 +706,34 @@ class CanvasPainter extends CustomPainter {
     final Float64List transformMatrix = Float64List.fromList(transform.storage);
     canvas.transform(transformMatrix);
 
-    // Draw assets (images/PDFs)
     for (final asset in assets) {
       if (asset.type == 'image' && currentImage != null) {
         final rect = Rect.fromLTWH(
-          asset.position.dx,
-          asset.position.dy,
-          currentImage!.width * asset.scale,
-          currentImage!.height * asset.scale,
-        );
+            asset.position.dx,
+            asset.position.dy,
+            currentImage!.width * asset.scale,
+            currentImage!.height * asset.scale);
         canvas.drawImageRect(
-          currentImage!,
-          Rect.fromLTWH(0, 0, currentImage!.width.toDouble(),
-              currentImage!.height.toDouble()),
-          rect,
-          Paint(),
-        );
+            currentImage!,
+            Rect.fromLTWH(0, 0, currentImage!.width.toDouble(),
+                currentImage!.height.toDouble()),
+            rect,
+            Paint());
       } else if (asset.type == 'pdf' && currentImage != null) {
         final rect = Rect.fromLTWH(
-          asset.position.dx,
-          asset.position.dy,
-          currentImage!.width * asset.scale,
-          currentImage!.height * asset.scale,
-        );
+            asset.position.dx,
+            asset.position.dy,
+            currentImage!.width * asset.scale,
+            currentImage!.height * asset.scale);
         canvas.drawImageRect(
-          currentImage!,
-          Rect.fromLTWH(0, 0, currentImage!.width.toDouble(),
-              currentImage!.height.toDouble()),
-          rect,
-          Paint(),
-        );
+            currentImage!,
+            Rect.fromLTWH(0, 0, currentImage!.width.toDouble(),
+                currentImage!.height.toDouble()),
+            rect,
+            Paint());
       }
     }
 
-    // Draw strokes
     for (final stroke in strokes) {
       final paint = Paint()
         ..color = stroke.color
@@ -660,9 +742,8 @@ class CanvasPainter extends CustomPainter {
       final path = Path();
       if (stroke.points.isNotEmpty) {
         path.moveTo(stroke.points.first.dx, stroke.points.first.dy);
-        for (final point in stroke.points.skip(1)) {
+        for (final point in stroke.points.skip(1))
           path.lineTo(point.dx, point.dy);
-        }
         canvas.drawPath(path, paint);
       }
     }

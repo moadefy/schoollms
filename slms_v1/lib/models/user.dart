@@ -64,8 +64,16 @@ class User {
     final roleDataJson = map['roleData'] != null
         ? jsonDecode(map['roleData'] as String) as Map<String, dynamic>
         : {};
-    final qualifiedSubjects =
-        roleDataJson['qualifiedSubjects'] as Map<String, dynamic>? ?? {};
+    // Correctly deserialize qualifiedSubjects as a List<Map<String, String>>
+    final qualifiedSubjects = roleDataJson['qualifiedSubjects'] != null
+        ? (roleDataJson['qualifiedSubjects'] as List<dynamic>)
+            .map((item) => item as Map<String, dynamic>)
+            .map((item) => {
+                  'subjectId': item['subjectId'] as String? ?? '',
+                  'gradeId': item['gradeId'] as String? ?? '',
+                })
+            .toList()
+        : <Map<String, String>>[];
     return User(
       id: map['id'] as String,
       country: map['country'] as String,
@@ -76,9 +84,8 @@ class User {
       contactNumber: map['contactNumber'] as String? ?? '',
       role: map['role'] as String,
       roleData: {
-        'qualifiedSubjects': qualifiedSubjects.map(
-          (key, value) => MapEntry(key, (value as List?)?.cast<String>() ?? []),
-        ),
+        ...roleDataJson,
+        'qualifiedSubjects': qualifiedSubjects,
       },
     );
   }

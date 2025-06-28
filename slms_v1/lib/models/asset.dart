@@ -1,3 +1,5 @@
+import 'package:sqflite/sqflite.dart';
+
 class Asset {
   final String id; // Unique identifier
   final String learnerId; // Reference to the learner
@@ -35,6 +37,20 @@ class Asset {
     );
   }
 
+  factory Asset.fromMap(Map<String, dynamic> map) {
+    return Asset(
+      id: map['id'] as String,
+      learnerId: map['learnerId'] as String,
+      questionId: map['questionId'] as String?,
+      type: map['type'] as String,
+      data: map['data'] as String,
+      positionX: (map['positionX'] as num?)?.toDouble() ?? 0.0,
+      positionY: (map['positionY'] as num?)?.toDouble() ?? 0.0,
+      scale: (map['scale'] as num?)?.toDouble() ?? 1.0,
+      created_at: map['created_at'] as int,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -47,5 +63,36 @@ class Asset {
       'scale': scale,
       'created_at': created_at,
     };
+  }
+
+  // Add this if using SQLite with sqflite
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'learnerId': learnerId,
+      'questionId': questionId,
+      'type': type,
+      'data': data,
+      'positionX': positionX,
+      'positionY': positionY,
+      'scale': scale,
+      'created_at': created_at,
+    };
+  }
+
+  static Future<void> createTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE assets (
+        id TEXT PRIMARY KEY,
+        learnerId TEXT NOT NULL,
+        questionId TEXT,
+        type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        positionX REAL NOT NULL,
+        positionY REAL NOT NULL,
+        scale REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
   }
 }

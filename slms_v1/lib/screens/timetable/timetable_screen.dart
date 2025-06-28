@@ -16,9 +16,9 @@ import 'package:schoollms/models/learnertimetable.dart';
 import 'package:schoollms/widgets/canvas_widget.dart';
 import 'package:schoollms/screens/canvas/teacher_canvas_screen.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:schoollms/models/subject.dart'; // New import
-import 'package:schoollms/models/grade.dart'; // New import
-import 'package:schoollms/models/language.dart'; // New import
+import 'package:schoollms/models/subject.dart';
+import 'package:schoollms/models/grade.dart';
+import 'package:schoollms/models/language.dart';
 
 class TimetableScreen extends StatefulWidget {
   @override
@@ -161,187 +161,192 @@ class _TimetableScreenState extends State<TimetableScreen> {
     List<String> selectedLearnerIds = [];
     List<User> existingLearners = [];
 
+    // Fetch user data and handle as User object
+    final userData = await db.getUserDataById(userId);
+    final qualifiedSubjects =
+        userData?.roleData['qualifiedSubjects'] as List<Map<String, String>>? ??
+            [];
+
     await showDialog(
         context: context,
         builder: (context) => StatefulBuilder(builder: (context, setState) {
-              return FutureBuilder<User?>(
-                future: Provider.of<DatabaseService>(context, listen: false)
-                    .getUserDataById(userId),
-                builder: (context, snapshot) {
-                  final user = snapshot.data;
-                  final qualifiedSubjects = user?.roleData['qualifiedSubjects']
-                          as List<Map<String, String>>? ??
-                      [];
-                  final subjectItems = subjects
-                      .where((s) => qualifiedSubjects.any((qs) =>
-                          qs['subjectId'] == s.id &&
-                          qs['gradeId'] ==
-                              grades.firstWhere((g) => g.number == 10).id))
-                      .map((s) => DropdownMenuItem<String>(
-                            value: s.id,
-                            child: Text(s.name),
-                          ))
-                      .toList();
-                  final gradeItems = grades
-                      .where((g) => qualifiedSubjects.any((qs) =>
-                          qs['gradeId'] == g.id &&
-                          subjects.any((s) => s.id == selectedSubjectId)))
-                      .map((g) => DropdownMenuItem<String>(
-                            value: g.id,
-                            child: Text('Grade ${g.number}'),
-                          ))
-                      .toList();
+              // Filter subjects based on qualifiedSubjects
+              final qualifiedSubjectIds = qualifiedSubjects
+                  .map((qs) => qs['subjectId'])
+                  .whereType<String>()
+                  .toSet();
+              final filteredSubjects = subjects
+                  .where((s) => qualifiedSubjectIds.contains(s.id))
+                  .toList();
 
-                  return AlertDialog(
-                    title: Text(
-                        isAddingNewClass ? 'Add New Class' : 'Select Class'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isAddingNewClass)
-                          Column(
-                            children: [
-                              DropdownButton<String>(
-                                hint: const Text('Select Subject'),
-                                value: selectedSubjectId,
-                                items: subjectItems,
-                                onChanged: (value) =>
-                                    setState(() => selectedSubjectId = value),
-                              ),
-                              DropdownButton<String>(
-                                hint: const Text('Select Grade'),
-                                value: selectedGradeId,
-                                items: gradeItems,
-                                onChanged: (value) =>
-                                    setState(() => selectedGradeId = value),
-                              ),
-                            ],
-                          )
-                        else
+              // Filter grades based on qualifiedSubjects and the selected subject
+              final filteredGrades = grades.where((g) {
+                return qualifiedSubjects.any((qs) =>
+                    qs['subjectId'] == selectedSubjectId &&
+                    qs['gradeId'] == g.id);
+              }).toList();
+
+              return AlertDialog(
+                title:
+                    Text(isAddingNewClass ? 'Add New Class' : 'Select Class'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isAddingNewClass)
+                      Column(
+                        children: [
                           DropdownButton<String>(
-                            hint: const Text('Select Class'),
-                            value: selectedClassId,
-                            items: classes
-                                .map((cls) => DropdownMenuItem<String>(
-                                      value: cls.id,
-                                      child: Text(cls.title),
+                            hint: const Text('Select Subject'),
+                            value: selectedSubjectId,
+                            items: filteredSubjects
+                                .map((s) => DropdownMenuItem<String>(
+                                      value: s.id,
+                                      child: Text(s.name),
                                     ))
                                 .toList(),
-                            onChanged: (value) async {
-                              setState(() => selectedClassId = value);
-                              if (value != null) {
-                                existingLearners = await _loadLearners(value);
-                                setState(() => learners = existingLearners);
-                              }
+                            onChanged: (value) {
+                              setState(() {
+                                selectedSubjectId = value;
+                                selectedGradeId =
+                                    null; // Reset grade when subject changes
+                              });
                             },
                           ),
-                        if (!isAddingNewClass && selectedClassId != null)
-                          ElevatedButton(
-                            onPressed: () async {
-                              final classData =
-                                  await db.getClassDataById(selectedClassId!);
-                              final classGradeId = classData?.gradeId;
-                              final result = await showDialog<List<String>>(
-                                context: context,
-                                builder: (context) => LearnerSelectionDialog(
-                                  learners: learners,
-                                  onAddNew: () async {
-                                    if (classGradeId != null) {
-                                      await _showAddLearnerDialog(
-                                          context, classGradeId);
-                                    }
-                                  },
-                                  classGradeId: classGradeId,
-                                ),
-                              );
-                              if (result != null)
-                                setState(() => selectedLearnerIds = result);
-                            },
-                            child: Text(
-                                'Select/Add Learners (${selectedLearnerIds.length})'),
+                          DropdownButton<String>(
+                            hint: const Text('Select Grade'),
+                            value: selectedGradeId,
+                            items: filteredGrades
+                                .map((g) => DropdownMenuItem<String>(
+                                      value: g.id,
+                                      child: Text('Grade ${g.number}'),
+                                    ))
+                                .toList(),
+                            onChanged: (value) =>
+                                setState(() => selectedGradeId = value),
                           ),
-                        if (!isAddingNewClass)
-                          ElevatedButton(
-                            onPressed: () =>
-                                setState(() => isAddingNewClass = true),
-                            child: const Text('Add New Class'),
-                          ),
-                      ],
-                    ),
-                    actions: [
-                      if (isAddingNewClass)
-                        TextButton(
-                          onPressed: () async {
-                            if (selectedSubjectId != null &&
-                                selectedGradeId != null) {
-                              final existingClasses = await db
-                                  .getTeacherClassDataByTeacherId(userId);
-                              final sameSubjectGradeClasses = existingClasses
-                                  .where((cls) =>
-                                      cls.subjectId == selectedSubjectId &&
-                                      cls.gradeId == selectedGradeId)
-                                  .toList();
-                              int classNumber = sameSubjectGradeClasses.isEmpty
-                                  ? 1
-                                  : sameSubjectGradeClasses.map((cls) {
-                                        final match = RegExp(r'Class (\d+)$')
-                                            .firstMatch(cls.title);
-                                        return match != null
-                                            ? int.parse(match.group(1)!)
-                                            : 0;
-                                      }).reduce((a, b) => a > b ? a : b) +
-                                      1;
-                              final subject = subjects
-                                  .firstWhere((s) => s.id == selectedSubjectId);
-                              final grade = grades
-                                  .firstWhere((g) => g.id == selectedGradeId);
-                              final classTitle =
-                                  '${subject.name} ${grade.number} Class $classNumber';
-                              final newClass = ClassData(
-                                id: const Uuid().v4(),
-                                teacherId: userId,
-                                subjectId: selectedSubjectId!,
-                                gradeId: selectedGradeId!,
-                                title: classTitle,
-                                createdAt:
-                                    DateTime.now().millisecondsSinceEpoch,
-                                learnerIds: [],
-                              );
-                              try {
-                                await db.insertClassData(newClass);
-                                setState(() => isAddingNewClass = false);
-                                classes = await db
-                                    .getTeacherClassDataByTeacherId(userId);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                        content:
-                                            Text('Class added successfully')));
-                              } catch (e) {
-                                if (mounted)
-                                  setState(() =>
-                                      errorMessage = 'Error adding class: $e');
-                              }
-                            }
-                          },
-                          child: const Text('Add Class'),
-                        ),
-                      TextButton(
-                        onPressed: () {
-                          if (!isAddingNewClass &&
-                              selectedClassId != null &&
-                              selectedLearnerIds.isNotEmpty) {
-                            _saveTimetableSlot(selectedClassId!,
-                                selectedLearnerIds, slotIndex);
+                        ],
+                      )
+                    else
+                      DropdownButton<String>(
+                        hint: const Text('Select Class'),
+                        value: selectedClassId,
+                        items: classes
+                            .map((cls) => DropdownMenuItem<String>(
+                                  value: cls.id,
+                                  child: Text(cls.title),
+                                ))
+                            .toList(),
+                        onChanged: (value) async {
+                          setState(() => selectedClassId = value);
+                          if (value != null) {
+                            existingLearners = await _loadLearners(value);
+                            setState(() => learners = existingLearners);
                           }
-                          Navigator.pop(context);
                         },
-                        child: isAddingNewClass
-                            ? const Text('Close')
-                            : const Text('Save'),
                       ),
-                    ],
-                  );
-                },
+                    if (!isAddingNewClass && selectedClassId != null)
+                      ElevatedButton(
+                        onPressed: () async {
+                          final classData =
+                              await db.getClassDataById(selectedClassId!);
+                          final classGradeId = classData?.gradeId;
+                          final result = await showDialog<List<String>>(
+                            context: context,
+                            builder: (context) => LearnerSelectionDialog(
+                              learners: learners,
+                              onAddNew: () async {
+                                if (classGradeId != null) {
+                                  await _showAddLearnerDialog(
+                                      context, classGradeId);
+                                }
+                              },
+                              classGradeId: classGradeId,
+                            ),
+                          );
+                          if (result != null)
+                            setState(() => selectedLearnerIds = result);
+                        },
+                        child: Text(
+                            'Select/Add Learners (${selectedLearnerIds.length})'),
+                      ),
+                    if (!isAddingNewClass)
+                      ElevatedButton(
+                        onPressed: () =>
+                            setState(() => isAddingNewClass = true),
+                        child: const Text('Add New Class'),
+                      ),
+                  ],
+                ),
+                actions: [
+                  if (isAddingNewClass)
+                    TextButton(
+                      onPressed: () async {
+                        if (selectedSubjectId != null &&
+                            selectedGradeId != null) {
+                          final existingClasses =
+                              await db.getTeacherClassDataByTeacherId(userId);
+                          final sameSubjectGradeClasses = existingClasses
+                              .where((cls) =>
+                                  cls.subjectId == selectedSubjectId &&
+                                  cls.gradeId == selectedGradeId)
+                              .toList();
+                          int classNumber = sameSubjectGradeClasses.isEmpty
+                              ? 1
+                              : sameSubjectGradeClasses.map((cls) {
+                                    final match = RegExp(r'Class (\d+)$')
+                                        .firstMatch(cls.title);
+                                    return match != null
+                                        ? int.parse(match.group(1)!)
+                                        : 0;
+                                  }).reduce((a, b) => a > b ? a : b) +
+                                  1;
+                          final subject = filteredSubjects
+                              .firstWhere((s) => s.id == selectedSubjectId);
+                          final grade =
+                              grades.firstWhere((g) => g.id == selectedGradeId);
+                          final classTitle =
+                              '${subject.name} ${grade.number} Class $classNumber';
+                          final newClass = ClassData(
+                            id: const Uuid().v4(),
+                            teacherId: userId,
+                            subjectId: selectedSubjectId!,
+                            gradeId: selectedGradeId!,
+                            title: classTitle,
+                            createdAt: DateTime.now().millisecondsSinceEpoch,
+                            learnerIds: [],
+                          );
+                          try {
+                            await db.insertClassData(newClass);
+                            setState(() => isAddingNewClass = false);
+                            classes =
+                                await db.getTeacherClassDataByTeacherId(userId);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text('Class added successfully')));
+                          } catch (e) {
+                            if (mounted)
+                              setState(() =>
+                                  errorMessage = 'Error adding class: $e');
+                          }
+                        }
+                      },
+                      child: const Text('Add Class'),
+                    ),
+                  TextButton(
+                    onPressed: () {
+                      if (!isAddingNewClass &&
+                          selectedClassId != null &&
+                          selectedLearnerIds.isNotEmpty) {
+                        _saveTimetableSlot(
+                            selectedClassId!, selectedLearnerIds, slotIndex);
+                      }
+                      Navigator.pop(context);
+                    },
+                    child: isAddingNewClass
+                        ? const Text('Close')
+                        : const Text('Save'),
+                  ),
+                ],
               );
             }));
   }
@@ -1140,6 +1145,65 @@ class _TimetableScreenState extends State<TimetableScreen> {
     return remarks;
   }
 
+  Future<void> _openCanvasForEditing(String questionId) async {
+    final db = Provider.of<DatabaseService>(context, listen: false);
+    final question = await db.getQuestionById(questionId);
+    if (question != null) {
+      final strokes = question.content;
+      final assets = await db.getAssetsByQuestion(questionId);
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CanvasWidget(
+            learnerId: userId,
+            strokes: strokes,
+            readOnly: false,
+            onSave: () {},
+            onUpdate: (data) {
+              db.updateQuestion(Question(
+                id: questionId,
+                classId: question.classId,
+                content: jsonEncode(data['strokes']),
+                pdfPage: question.pdfPage,
+                slotId: question.slotId,
+              ));
+            },
+            initialAssets: assets
+                .map((a) => CanvasAsset(
+                      id: a.id,
+                      type: a.type,
+                      path: a.data,
+                      pageIndex: 0,
+                      position: Offset(a.positionX, a.positionY),
+                      scale: a.scale,
+                    ))
+                .toList(),
+            onAssetsUpdate: (updatedAssets) async {
+              for (var asset in updatedAssets) {
+                await db.insertAsset(Asset(
+                  id: const Uuid().v4(),
+                  learnerId: userId,
+                  questionId: questionId,
+                  type: asset.type,
+                  data: asset.path,
+                  positionX: asset.position.dx,
+                  positionY: asset.position.dy,
+                  scale: asset.scale,
+                  created_at: DateTime.now().millisecondsSinceEpoch,
+                ));
+              }
+            },
+            userRole: 'teacher',
+            timetableId: timetableSlots.firstWhere(
+                (s) => s['timetableId'] == question.slotId,
+                orElse: () => {})['timetableId'],
+            slotId: question.slotId,
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1221,17 +1285,23 @@ class _TimetableScreenState extends State<TimetableScreen> {
                         return GestureDetector(
                           onTap: slot.isEmpty && role == 'teacher'
                               ? () => _showAddTimetableDialog(context, index)
-                              : null,
+                              : () {
+                                  if (slot['questionId'] != null) {
+                                    _openCanvasForEditing(slot['questionId']);
+                                  }
+                                },
                           child: Card(
-                            color: slot.isNotEmpty
-                                ? _getSubjectColor(slot['subject'] ?? 'Unknown')
-                                : Colors.green[100],
+                            color: slot.isEmpty
+                                ? Colors.green[100]
+                                : _getSubjectColor(
+                                    slot['subject'] ?? 'Unknown'),
                             child: FutureBuilder<int>(
                               future: slot.isNotEmpty && slot['classId'] != null
                                   ? Provider.of<DatabaseService>(context,
                                           listen: false)
                                       .getClassDataById(slot['classId'])
-                                      .then((data) => data.learnerIds.length)
+                                      .then((classData) =>
+                                          classData?.learnerIds.length ?? 0)
                                       .catchError((_) => 0)
                                   : Future.value(0),
                               builder: (context, snapshot) {
@@ -1252,6 +1322,13 @@ class _TimetableScreenState extends State<TimetableScreen> {
                                             Text(
                                                 'Grade: ${slot['grade'] ?? 'Unknown'}'),
                                             Text('Learners: $learnerCount'),
+                                            if (slot['questionId'] != null)
+                                              TextButton(
+                                                onPressed: () =>
+                                                    _openCanvasForEditing(
+                                                        slot['questionId']),
+                                                child: Text('Edit Question'),
+                                              ),
                                             if (role == 'teacher')
                                               PopupMenuButton<String>(
                                                 onSelected: (value) async {

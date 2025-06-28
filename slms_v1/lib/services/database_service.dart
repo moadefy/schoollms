@@ -22,7 +22,7 @@ import 'package:schoollms/widgets/canvas_widget.dart';
 class DatabaseService {
   Database? _db;
   final _uuid = const Uuid();
-  static const int _baseVersion = 27;
+  static const int _baseVersion = 29;
   bool _isInitialized = false;
 
   Future<void> init() async {
@@ -2173,6 +2173,43 @@ class DatabaseService {
     } catch (e) {
       print('Error inserting data into $tableName: $e');
       throw Exception('Failed to insert data into $tableName: $e');
+    }
+  }
+
+  Future<Question?> getQuestionById(String id) async {
+    try {
+      final result = await _db?.query('questions',
+          where: 'id = ?', whereArgs: [id], limit: 1);
+      return result!.isNotEmpty ? Question.fromMap(result.first) : null;
+    } catch (e) {
+      print('Error fetching question by ID: $e');
+      return null;
+    }
+  }
+
+  Future<List<Asset>> getAssetsByQuestion(String questionId) async {
+    try {
+      final result = await _db
+          ?.query('assets', where: 'questionId = ?', whereArgs: [questionId]);
+      if (result == null) return [];
+      return result.map((map) => Asset.fromMap(map)).toList();
+    } catch (e) {
+      print('Error fetching assets by question: $e');
+      return [];
+    }
+  }
+
+  Future<void> updateQuestion(Question question) async {
+    try {
+      await _db?.update(
+        'questions',
+        question.toMap(),
+        where: 'id = ?',
+        whereArgs: [question.id],
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (e) {
+      print('Error updating question: $e');
     }
   }
 }
