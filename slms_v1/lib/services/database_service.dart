@@ -276,6 +276,18 @@ class DatabaseService {
       PRIMARY KEY (teacherId, classId)
     )
   ''');
+    print("Creating Installation Logs table");
+    await db.execute('''
+    CREATE TABLE installation_logs (
+      id TEXT PRIMARY KEY,
+      installer_id TEXT,
+      recipient_id TEXT,
+      role TEXT,
+      timestamp INTEGER,
+      ip TEXT,
+      status TEXT
+    ) 
+  ''');
   }
 
   Future<void> _seedData(Database db) async {
@@ -2210,6 +2222,191 @@ class DatabaseService {
       );
     } catch (e) {
       print('Error updating question: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingTeacherChanges(
+      String teacherId, String learnerId) async {
+    if (_db == null) {
+      throw Exception('Database not initialized');
+    }
+    try {
+      final maps = await _db!.query(
+        'sync_pending',
+        where:
+            'related_user_id = ? AND table_name IN (?, ?, ?, ?, ?) AND modified_at > ?',
+        whereArgs: [
+          learnerId,
+          'users',
+          'classdata',
+          'timetables',
+          'timetable_slots',
+          'learner_timetables',
+          0
+        ],
+      );
+      return maps.map((map) {
+        try {
+          return {
+            'id': map['id'],
+            'table_name': map['table_name'],
+            'operation': map['operation'],
+            'data': jsonDecode(map['data'] as String),
+            'modified_at': map['modified_at'],
+          };
+        } catch (e) {
+          return {
+            'id': map['id'],
+            'table_name': map['table_name'],
+            'operation': map['operation'],
+            'data': {},
+            'modified_at': map['modified_at'],
+          };
+        }
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch pending teacher changes: $e');
+    }
+  }
+
+  Future<void> clearPendingTeacherChanges(
+      String teacherId, String learnerId) async {
+    if (_db == null) {
+      throw Exception('Database not initialized');
+    }
+    try {
+      await _db!.delete(
+        'sync_pending',
+        where:
+            'related_user_id = ? AND table_name IN (?, ?, ?, ?, ?) AND modified_at > ?',
+        whereArgs: [
+          learnerId,
+          'users',
+          'classdata',
+          'timetables',
+          'timetable_slots',
+          'learner_timetables',
+          0
+        ],
+      );
+    } catch (e) {
+      throw Exception('Failed to clear pending teacher changes: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getPendingLearnerChanges(
+      String learnerId, String teacherId) async {
+    if (_db == null) {
+      throw Exception('Database not initialized');
+    }
+    try {
+      final maps = await _db!.query(
+        'sync_pending',
+        where:
+            'related_user_id = ? AND table_name IN (?, ?, ?, ?, ?) AND modified_at > ?',
+        whereArgs: [
+          teacherId,
+          'answers',
+          'assets',
+          'analytics',
+          'questions',
+          'assessments',
+          0
+        ],
+      );
+      return maps.map((map) {
+        try {
+          return {
+            'id': map['id'],
+            'table_name': map['table_name'],
+            'operation': map['operation'],
+            'data': jsonDecode(map['data'] as String),
+            'modified_at': map['modified_at'],
+          };
+        } catch (e) {
+          return {
+            'id': map['id'],
+            'table_name': map['table_name'],
+            'operation': map['operation'],
+            'data': {},
+            'modified_at': map['modified_at'],
+          };
+        }
+      }).toList();
+    } catch (e) {
+      throw Exception('Failed to fetch pending learner changes: $e');
+    }
+  }
+
+  Future<void> clearPendingLearnerChanges(
+      String learnerId, String teacherId) async {
+    if (_db == null) {
+      throw Exception('Database not initialized');
+    }
+    try {
+      await _db!.delete(
+        'sync_pending',
+        where:
+            'related_user_id = ? AND table_name IN (?, ?, ?, ?, ?) AND modified_at > ?',
+        whereArgs: [
+          teacherId,
+          'answers',
+          'assets',
+          'analytics',
+          'questions',
+          'assessments',
+          0
+        ],
+      );
+    } catch (e) {
+      throw Exception('Failed to clear pending learner changes: $e');
+    }
+  }
+
+  Future<List<String>> getAllLearnersForTeacher(String teacherId) async {
+    if (_db == null) {
+      throw Exception('Database not initialized');
+    }
+    try {
+      // Get all classes for the teacher
+      final classMaps = await _db!.query(
+        'classdata',
+        where: 'teacherId = ?',
+        whereArgs: [teacherId],
+      );
+
+      final List<String> learnerIds = [];
+      for (final classMap in classMaps) {
+        final learners = (classMap['learnerIds'] as String?)?.split(',') ?? [];
+        learnerIds.addAll(learners.where((id) => id.isNotEmpty));
+      }
+
+      // Remove duplicates
+      return learnerIds.toSet().toList();
+    } catch (e) {
+      print('Error fetching learners for teacher $teacherId: $e');
+      throw Exception('Failed to fetch learners for teacher: $e');
+    }
+  }
+
+  Future<void> cacheLearnerDevice(
+      String learnerId, String deviceId, String psk, int lastSyncTime) async {
+    if (_db == null) {
+      throw Exception('Database not initialized');
+    }
+    try {
+      await _db!.insert(
+        'learner_devices',
+        {
+          'learnerId': learnerId,
+          'deviceId': deviceId,
+          'psk': psk,
+          'last_sync_time': lastSyncTime,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (e) {
+      throw Exception('Failed to cache learner device: $e');
     }
   }
 }

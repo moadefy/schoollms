@@ -7,6 +7,8 @@ class Analytics {
   int? timestamp; // When the analytics data was recorded
   String? timetableId; // Added for traceability
   String? slotId; // Added for traceability
+  int? install_count; // Number of installations facilitated by this user
+  int? sync_count; // Number of syncs performed by this user
 
   Analytics({
     this.questionId,
@@ -17,6 +19,8 @@ class Analytics {
     this.timestamp,
     this.timetableId, // Added
     this.slotId, // Added
+    this.install_count = 0, // Default to 0
+    this.sync_count = 0, // Default to 0
   });
 
   factory Analytics.fromJson(Map<String, dynamic> json) {
@@ -29,6 +33,8 @@ class Analytics {
       timestamp: json['timestamp'] as int?,
       timetableId: json['timetableId'] as String?, // Added
       slotId: json['slotId'] as String?, // Added
+      install_count: json['install_count'] as int? ?? 0, // Default to 0
+      sync_count: json['sync_count'] as int? ?? 0, // Default to 0
     );
   }
 
@@ -42,6 +48,8 @@ class Analytics {
       'timestamp': timestamp,
       'timetableId': timetableId, // Added
       'slotId': slotId, // Added
+      'install_count': install_count,
+      'sync_count': sync_count,
     };
   }
 }

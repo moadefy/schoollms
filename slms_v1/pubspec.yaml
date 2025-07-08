@@ -19,7 +19,7 @@ dependencies:
   flutter_draggable_gridview: ^0.0.13 # Downgraded to existing version
   encrypt: ^5.0.3 # Null-safe, latest
   crypto: ^3.0.5 # Null-safe, latest
-  archive: ^3.6.1 # Null-safe, latest
+  archive: ^4.0.7 # Null-safe, latest
   async: ^2.11.0 # Null-safe, latest
   multicast_dns: ^0.3.2+7 # Null-safe, latest
   pdf_render: ^1.4.6 # Null-safe, latest
@@ -27,6 +27,9 @@ dependencies:
   image_picker: ^1.1.2 # Null-safe, latest
   cupertino_icons: ^1.0.8 # Null-safe, latest
   permission_handler: ^11.3.1 # For runtime permissions
+  flutter_bluetooth_serial: ^0.4.0
+  path_provider: ^2.1.5
+  http_server: ^1.0.0
 
 dev_dependencies:
   flutter_test:

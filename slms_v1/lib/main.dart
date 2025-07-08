@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/database_service.dart';
+import 'services/connection_service.dart'; // Added for ConnectionService
 import 'services/sync_service.dart';
 import 'services/background_sync_service.dart';
 import 'screens/timetable/timetable_screen.dart'; // Already correct, assuming timetable_screen.dart is the main timetable file
@@ -34,8 +35,12 @@ void main() async {
   } catch (e) {
     print("Initialization error: $e");
   }
-  final syncService = SyncService(dbService);
-  final backgroundSyncService = BackgroundSyncService(dbService, syncService);
+  final connectionService =
+      ConnectionService(dbService); // Initialize ConnectionService
+  final syncService = SyncService(
+      connectionService, dbService); // Correct order: ConnectionService first
+  final backgroundSyncService = BackgroundSyncService(
+      dbService, syncService, connectionService); // Add ConnectionService
 
   // Request permissions
   await requestPermissions();
@@ -44,6 +49,7 @@ void main() async {
     MultiProvider(
       providers: [
         Provider<DatabaseService>.value(value: dbService),
+        Provider<ConnectionService>.value(value: connectionService), // Added
         Provider<SyncService>.value(value: syncService),
         Provider<BackgroundSyncService>.value(value: backgroundSyncService),
         ChangeNotifierProvider(create: (_) => SyncState()),
